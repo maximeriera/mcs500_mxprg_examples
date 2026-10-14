@@ -1,0 +1,194 @@
+/* ==============================================================
+   02 — StartProgram: structure without flow control
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   StartProgram, program naming, and how to architect
+             a cell around a robot that has no IF statement
+   NEEDS     Robot activated; the sub-programs below must be
+             saved on the robot first (see SETUP)
+   WATCH     Mostly a reading exercise. Read the comments.
+   TIME      ~20 s once set up
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE ONE STRUCTURING TOOL
+
+       StartProgram("name")
+       StartProgram("folder/subfolder/name")
+
+   It runs another program that is saved on the robot. That is
+   the entire mechanism for reuse — there is no subroutine, no
+   parameter passing, and no return value.
+
+   Which sounds thin until you see what it is for.
+
+   FOLDERS
+
+   Programs are saved on the robot by name, and a slash in the
+   name creates a folder. So a cell can be organised:
+
+       demo/pick
+       demo/place
+       demo/home
+       station_a/load
+       station_b/load
+
+   Names are case sensitive, up to 63 characters. Stick to
+   letters, digits and underscores and you will never have to
+   think about which other characters are allowed. The .mxprog
+   extension belongs to the file on your PC — the program name
+   on the robot has no extension.
+
+   THE ARCHITECTURE THIS IMPLIES
+
+   Because there is no branching, the shape of a well-built
+   Mecademic cell is always the same:
+
+       HOST (PC / IPC / PLC)          ROBOT
+       -------------------------      ----------------------
+       reads sensors                  holds motion sequences
+       runs the state machine   --->  executes them on request
+       decides what happens next      reports checkpoints
+       drives the tool
+       handles errors and recovery
+       logs, HMI, recipes
+
+   The host holds every decision. The robot holds every
+   trajectory. StartProgram is the interface between them, and a
+   checkpoint is how the robot answers.
+
+   Note "drives the tool". The MCS500 has no tool I/O of its
+   own: the manual says end-of-arm tooling is controlled directly
+   from your PLC. So the gripper valve, the vacuum switch, the
+   dispenser trigger — all of it is wired to the host, and the
+   host switches it between robot programs.
+
+   A cycle looks like:
+
+       host: StartProgram("demo/pick")
+       host: wait for checkpoint [3030][10]   arm down at the part
+       host: close the gripper, confirm the part is held
+       host: read the vision result, decide where to place
+       host: SetVariable(demo.place, <the pose>)
+       host: StartProgram("demo/place")
+       host: wait for checkpoint [3030][20]   arm down at the tray
+       host: open the gripper
+
+   All the logic is in the host. All the motion is in named,
+   version-controlled, individually testable robot programs.
+
+   WHY THIS IS A GOOD ANSWER, NOT AN EXCUSE
+
+   Reps get asked "why can't the robot do IF?" — here is the
+   honest answer to give:
+
+     - The customer's logic already lives in their PLC or PC.
+       Splitting a state machine across two devices is how
+       cells become unmaintainable.
+     - The host language is one they already know, with an IDE,
+       a debugger, unit tests and version control. A proprietary
+       robot language has none of that.
+     - Motion sequences stay small, named and testable. You can
+       run demo/pick on its own to check it.
+     - It scales: the same host code drives four robots.
+
+   The pitch is that the MCS500 is a precision motion component
+   with an excellent API, not a controller pretending to be a
+   PLC. Customers who want a teach pendant and a proprietary
+   language are not the target, and that is fine.
+
+   ------------------------------------------------------------
+   SETUP FOR THIS FILE
+
+   StartProgram only finds programs already saved ON THE ROBOT.
+   Before running this, create and save three small programs
+   using the MecaPortal program manager:
+
+     demo/home
+         SetJointVel(20)
+         MoveJoints(0, 0, 0, 0)
+         SetCheckpoint(1)
+
+     demo/pick
+         SetCartLinVel(60)
+         MovePose(170, -60, 80, 0)
+         MoveLin(170, -60, 50, 0)
+         SetCheckpoint(10)
+         Delay(0.5)
+         MoveLinRelWrf(0, 0, 30, 0)
+
+     demo/place
+         SetCartLinVel(60)
+         MovePose(170, 60, 80, 0)
+         MoveLin(170, 60, 50, 0)
+         SetCheckpoint(20)
+         Delay(0.5)
+         MoveLinRelWrf(0, 0, 30, 0)
+
+   The Delay after each checkpoint stands in for the host
+   working the tool. In a real cell each program would END at
+   its checkpoint, and the host would start the retract once the
+   tool had done its job — 03_pick_and_place.mxprog shows that
+   split.
+
+   If they are not saved, StartProgram reports [3017], no offline
+   program saved.
+   --------------------------------------------------------------- */
+
+
+/* --- A cycle, assembled from named blocks ----------------------
+   This is what the host would issue, one call at a time, waiting
+   on the checkpoint after each. Here they run back to back so
+   you can watch the whole cycle. */
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+StartProgram("demo/home")
+
+StartProgram("demo/pick")
+
+StartProgram("demo/place")
+
+StartProgram("demo/home")
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Open demo/pick in the program manager and run it on its
+      own. Being able to test one motion block in isolation,
+      without running the cell, is a genuine engineering
+      advantage — say so.
+
+   2. Edit demo/pick, save, and run this file again. The cycle
+      picks up the change with nothing else touched.
+
+   3. When the "no flow control" question comes — and it always
+      comes — do not get defensive. Draw the two-column diagram
+      from the comments above. Most integrators nod, because it
+      is how they already build machines.
+
+   NEXT   03_pick_and_place.mxprog — everything so far, in one
+          program.
+   --------------------------------------------------------------- */

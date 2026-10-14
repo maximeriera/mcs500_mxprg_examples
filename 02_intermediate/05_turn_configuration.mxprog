@@ -1,0 +1,178 @@
+/* ==============================================================
+   05 — Turn configuration: the turning shaft
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   SetConfTurn, SetAutoConfTurn, and joint 4
+   NEEDS     Robot activated, no tool mounted. A strip of tape on
+             the shaft makes joint 4 much easier to watch.
+   WATCH     Joint 4 reaching the same angle by two routes
+   TIME      ~30 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   JOINT 4 IS DIFFERENT
+
+   Joints 1, 2 and 3 have mechanical limits. Joint 4 — the shaft
+   turning about its own axis — does not. It can keep turning,
+   and its software limit is plus or minus ten full turns.
+
+   That creates an ambiguity the other joints do not have. If you
+   ask for a tool orientation, joint 4 at 10 degrees and joint 4
+   at 370 degrees produce exactly the same orientation. The tool
+   looks identical. The shaft has turned a full extra revolution.
+
+   The TURN CONFIGURATION parameter, ct, says which revolution
+   you meant:
+
+       SetConfTurn(ct)      ct an integer from -10 to 10
+
+   It selects the range for joint 4 as
+   -180 + ct*360 < θ4 <= 180 + ct*360. So ct = 0 is the normal
+   range, ct = 1 is one full turn further on, and so on.
+
+   WHY ANYONE CARES: WHATEVER IS CONNECTED TO THE SHAFT
+
+   For a bare shaft, none of this matters and you should leave it
+   alone. It matters when something is CONNECTED to the tool on
+   the shaft — a powered gripper's cable, a sensor lead, an air
+   or vacuum tube. On a SCARA that is the common case: the tool
+   turns with joint 4, and whatever feeds it has to follow.
+
+   Cable routing at 5 degrees and at 365 degrees is not the same
+   thing at all. One is slack; the other has a full wrap round
+   the shaft. Do that a few thousand times in one direction and
+   the cable fails, or the tube kinks and pulls off its fitting.
+   Wear at the tool is one of the most common causes of
+   unplanned downtime on any robot, and it is entirely avoidable.
+
+   The recommended treatment for anything connected to the shaft:
+     1. Restrict joint 4 with SetJointLimits to the range the
+        cable or tube can actually tolerate.
+     2. Specify the turn with SetConfTurn so the robot always
+        arrives at a pose the same way round.
+
+   For a tool with nothing connected, leave automatic turn
+   selection on. The manual is explicit about this: with a
+   cable-less end-effector, automatic turn configuration should
+   never be disabled.
+
+   ONE PRACTICAL WARNING
+
+   The MCS500's absolute encoders can only count joint 4 over
+   plus or minus ten turns — the same as the software limit. Do
+   not turn the shaft by hand beyond that, for example with the
+   brakes released.
+
+   BY DEFAULT
+
+       SetAutoConfTurn(1)   robot chooses the nearest (default)
+       SetAutoConfTurn(0)   freeze the current turn
+       SetConfTurn(ct)      demand a specific revolution
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(20)
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+
+/* --- Seeing the ambiguity directly -----------------------------
+   These two joint sets are the same robot POSTURE. The shaft
+   ends up pointing the same way both times. But getting from one
+   to the other is a full revolution of the shaft — which you can
+   watch happen, if you put tape on it.
+
+   Note that we use MoveJoints here, because joint positions are
+   the only way to state "the same orientation, one turn further
+   on" unambiguously. */
+MoveJoints(0, 0, 0, 30)
+Delay(1.5)
+
+MoveJoints(0, 0, 0, 390)            // 30 + 360: same orientation
+Delay(1.5)
+
+MoveJoints(0, 0, 0, 30)             // and back
+Delay(1.5)
+
+
+/* --- Controlling it from a Cartesian pose ----------------------
+   Now the same idea through MovePose, where you specify an
+   orientation and the robot decides which revolution to use. */
+
+MovePose(170, 0, 80, 0)
+Delay(1)
+
+// Demand the normal range: joint 4 lands between -180 and 180.
+SetConfTurn(0)
+MovePose(170, 0, 80, 90)
+Delay(1.5)
+
+// Demand one turn further on. Identical pose command, identical
+// tool orientation at the end — and the shaft takes a whole
+// extra revolution to get there. Watch the tape, not the arm:
+// the arm does not move at all.
+SetConfTurn(1)
+MovePose(170, 0, 80, 90)
+Delay(1.5)
+
+// Back to the normal range.
+SetConfTurn(0)
+MovePose(170, 0, 80, 0)
+
+
+// --- Hand control back and go home ----------------------------
+// For a tool with nothing connected, this is the correct state
+// to leave in. Going home also unwinds joint 4 to zero, which
+// the manual suggests as a good habit before powering off.
+SetAutoConfTurn(1)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. This one sells hardest to anyone running a cable or a tube
+      to the tool. Ask whether they have ever replaced
+      one that wore through. The answer is usually yes, and
+      usually with feeling.
+
+   2. Run the two SetConfTurn poses back to back. Same command,
+      same final orientation, one takes a full extra turn. Then
+      point out that without SetConfTurn, which one you get is
+      the robot's choice, and it can differ between cycles.
+
+   3. A pick fed by a camera is the case to think through. Every
+      part arrives at a different angle, and automatic selection
+      always takes the shortest turn from wherever the shaft is
+      NOW. Three parts in a row each a third of a turn further
+      round, and the shaft has done a full revolution without
+      ever coming back. Over a shift, those shortest turns can
+      walk the shaft whole revolutions away from zero, winding
+      the cable as they go. Pinning the turn stops that.
+
+   NEXT   06_blending.mxprog — cycle time you get for free.
+   --------------------------------------------------------------- */

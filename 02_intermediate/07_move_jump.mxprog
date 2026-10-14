@@ -1,0 +1,211 @@
+/* ==============================================================
+   07 — MoveJump: the SCARA's own move
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   MoveJump, SetMoveJumpHeight, SetMoveJumpApproachVel
+   NEEDS     Robot activated, no tool mounted
+   WATCH     The same hop, written three moves long and then one
+   TIME      ~35 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE SHAPE A SCARA LIVES IN
+
+   Almost everything a SCARA does in production has the same
+   shape: lift straight up off a part, travel across, come
+   straight down onto the next spot. Written with the commands so
+   far, that is three moves:
+
+       MoveLin(<above here>)       straight up
+       MovePose(<above there>)     across
+       MoveLin(<there>)            straight down
+
+   Three moves means two forced stops — remember that a MoveLin
+   and a MovePose never blend — and three commands' worth of
+   planning. The MCS500 has one command that does the whole hop:
+
+       MoveJump(x, y, z, γ)
+
+   Same four arguments as MovePose: the pose where you want to
+   LAND. The robot lifts straight up from where it is, travels
+   across, and comes straight down onto the target. The manual
+   says it is highly optimised for pick and place, and much
+   faster than the three-move version. Watch the two versions
+   below and you will not need the stopwatch.
+
+   THE TWO SETTINGS THAT SHAPE THE HOP
+
+       SetMoveJumpHeight(hstart, hend, hmin, hmax)
+
+     hstart   how far to lift straight up before going across
+     hend     how far above the target to come straight down from
+     hmin     the lowest the hop may peak, above the higher of the
+              start and the end
+     hmax     the highest it may peak, likewise
+
+   All in mm. Default: 10, 10, 0, 102 — lift and land through
+   10 mm of straight vertical, and let the robot choose the
+   fastest hop in between. Raise hmin to clear an obstacle
+   between the two points; lower hmax to keep the hop under
+   something overhead. Constraining either can cost cycle time,
+   because it takes away the robot's freedom to pick the fastest
+   path. (The heights are measured along the base's z, so they
+   are positive for a robot standing on a table.)
+
+       SetMoveJumpApproachVel(vstart, pstart, vend, pend)
+
+     vstart, pstart   cap the vertical speed at vstart mm/s for
+                      the first pstart mm of the lift
+     vend, pend       cap it at vend mm/s for the last pend mm of
+                      the landing
+
+   Default: 10, 1, 10, 1 — the first and last millimetre at
+   10 mm/s. A gentle touch built in, on every jump. Lengthen pend
+   to land a delicate part softly; set a speed to 0 for no cap
+   at all.
+
+   WHAT IT IS, AND WHAT IT IS NOT
+
+   MoveJump is a JOINT-SPACE move, like MovePose:
+
+     - its speed comes from SetJointVel and SetJointAcc, not
+       SetCartLinVel
+     - the posture and turn at the landing obey SetConf and
+       SetConfTurn, or the fastest choice if those are automatic
+     - the travel in the middle is a curve, not a straight line,
+       and its highest point can be anywhere along it — not
+       necessarily halfway
+
+   And one rule from geometry: the lift and the hop happen ABOVE
+   the start and the end, so a jump needs room up there. A start
+   or a landing with the shaft near the top of its 102 mm stroke
+   has nowhere to lift to. Keep pick and place heights well down
+   the stroke — the zero position, shaft fully up, is the worst
+   possible place to jump from.
+
+   Two rules from the manual, both easy to break:
+
+     - BLENDING OFF. Two MoveJumps in a row, or a MoveJump
+       followed by a MovePose, need SetBlending(0) first, or the
+       jump will not be completed as planned.
+     - NOT IN TIME-BASED MODE. MoveJump must not be used after
+       SetMoveMode(1). See 03_advanced/06.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(30)
+SetCartLinVel(150)
+
+// Blending off for the whole file: MoveJump needs it, and the
+// three-move version stops at every corner anyway.
+SetBlending(0)
+
+MoveJoints(0, 0, 0, 0)
+
+// Start down at "the pick", 40 mm above the bench.
+MovePose(170, -70, 40, 0)
+Delay(1)
+
+
+/* --- The long way: three moves ---------------------------------
+   Up, across, down — then back the same way. Note the dead stop
+   at each top corner. */
+MoveLin(170, -70, 80, 0)
+MovePose(170, 70, 80, 0)
+MoveLin(170, 70, 40, 0)
+Delay(1)
+
+MoveLin(170, 70, 80, 0)
+MovePose(170, -70, 80, 0)
+MoveLin(170, -70, 40, 0)
+Delay(1.5)
+
+
+/* --- The SCARA way: one move -----------------------------------
+   The same hop, there and back, one line each way. No stops at
+   the corners, and the robot picks the height of the hop. Watch
+   the last millimetre of each landing slow right down — that is
+   the default approach speed. */
+MoveJump(170, 70, 40, 0)
+Delay(1)
+MoveJump(170, -70, 40, 0)
+Delay(1.5)
+
+
+/* --- Clearing something in between -----------------------------
+   Imagine a fixture wall standing between the two points. Lift
+   and land through 20 mm of straight vertical, and make the hop
+   peak between 40 and 60 mm above the start — clear of the wall,
+   but no higher than needed. */
+SetMoveJumpHeight(20, 20, 40, 60)
+
+MoveJump(170, 70, 40, 0)
+Delay(1)
+
+
+/* --- Landing softly --------------------------------------------
+   A delicate part: cap the last 10 mm of the landing at
+   20 mm/s. The lift is untouched. */
+SetMoveJumpApproachVel(10, 1, 20, 10)
+
+MoveJump(170, -70, 40, 0)
+Delay(1)
+
+
+/* --- Turning the part on the way -------------------------------
+   γ changes too: the part is turned 90 degrees during the hop,
+   for free. Joint 4 does it while the arm travels. */
+MoveJump(170, 70, 40, 90)
+Delay(1)
+MoveJump(170, -70, 40, 0)
+Delay(1)
+
+
+// --- Defaults back, and home ----------------------------------
+SetMoveJumpHeight(10, 10, 0, 102)
+SetMoveJumpApproachVel(10, 1, 10, 1)
+MoveJoints(0, 0, 0, 0)
+SetBlending(100)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Run the three-move block and the MoveJump block back to
+      back. Same two points, same SetJointVel. This is the demo
+      that explains why SCARAs exist.
+
+   2. Raise SetJointVel to 100 and run the MoveJump block alone.
+      Then ask what their current pick-and-place cycle time is.
+
+   3. In the "landing softly" block, change pend from 10 to 30.
+      That is longer than the 20 mm vertical landing, so the
+      whole landing now crawls in at 20 mm/s. It is the dial for
+      fragile parts, and its cost in cycle time is plain to see.
+
+   NEXT   03_advanced/01_variables.mxprog — programs that are not
+          hard-coded.
+   --------------------------------------------------------------- */

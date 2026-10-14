@@ -1,0 +1,245 @@
+/* ==============================================================
+   05 — Payload and torque limits
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   SetPayload, SetTorqueLimits, SetTorqueLimitsCfg
+   NEEDS     Robot activated. Read before running.
+   WATCH     Two features that mostly show up as numbers, not
+             as motion
+   TIME      ~25 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   1. TELLING THE ROBOT WHAT IT IS CARRYING
+
+       SetPayload(m, cx, cy, cz)
+
+     m           mass in kg, including the tool AND the part
+     cx, cy, cz  centre of mass, in mm, in the FRF
+
+   This is optional, and skipping it is one of the most common
+   reasons a customer's accuracy is worse than the datasheet.
+
+   The robot computes the motor torques it expects to need. Those
+   predictions are only as good as its model of what is hanging
+   off the shaft. Tell it the truth and you get:
+
+     - better path tracking, because the controller compensates
+       for the load rather than reacting to it
+     - meaningful torque limits, since the expected torque is now
+       computed against reality
+
+   On a SCARA the payload shows up in two different ways. Its
+   WEIGHT is carried by one joint only: joint 3, the shaft, which
+   is the only joint working against gravity. Its INERTIA is felt
+   by joints 1, 2 and 4 every time the arm swings or the shaft
+   turns — and a centre of mass off the shaft axis makes every
+   turn of joint 4 swing it round like a weight on a string.
+
+   The mass must include everything on the shaft — tool, adapter,
+   fittings, and the workpiece. Which means it changes DURING a
+   cycle: heavier when holding a part, lighter after placing it.
+   In a demanding application, set it twice per cycle. It costs
+   one line. The MCS500's rated payload is 0.5 kg, all of that
+   included.
+
+   And the sign rule again: the tool hangs below the end of the
+   shaft, so cz is NEGATIVE.
+
+   Default is 0 kg, reapplied on every activation.
+
+   2. TORQUE LIMITS
+
+       SetTorqueLimits(τ1, τ2, τ3, τ4)
+
+   A threshold per joint, as a percentage of that motor's maximum
+   allowable torque. All 100% by default.
+
+       SetTorqueLimitsCfg(s, m)
+
+     s — severity
+         0  no action
+         1  torque status event [3028]
+         2  pause motion, plus the event
+         4  event plus a torque limit error [3029]
+
+     m — detection mode
+         0  trigger if any actual motor torque exceeds its limit
+         1  same as 0, but ignore acceleration and deceleration
+            periods
+         2  trigger if actual torque DEVIATES from the predicted
+            torque by more than the limit
+
+   Mode 2 — the default since firmware 11.1 — is the interesting
+   one. It compares measured torque against the model's
+   prediction, so the threshold is about the UNEXPECTED part of
+   the load, not the total. That is what detects "something is in
+   the way", and it is why SetPayload matters: a wrong payload
+   makes the prediction wrong and the detection meaningless.
+
+   In mode 2 the numbers are small. The manual suggests values
+   around 10%, and warns that the prediction itself is usually
+   within 10% but can occasionally be off by 20%. So start a
+   little above that, run your real trajectory, and tighten.
+
+   Mode 1 exists because acceleration produces large legitimate
+   torque peaks. It is mainly useful for joint-space moves —
+   during Cartesian moves the rotary joints are almost always
+   accelerating or decelerating, so there is little left to
+   check.
+
+   With mode 0 you must use either very low accelerations or very
+   high torque limits, or you will trip on ordinary motion.
+
+   ON A SCARA, WATCH JOINT 3
+
+   The classic guarded move on this robot is a vertical one: the
+   shaft coming down onto a part. If the tool meets something on
+   the way down, the shaft is the joint pushing into it, so
+   joint 3's torque is where the contact shows. Whatever else you
+   set, that is the threshold that does the work.
+
+   HOW TO USE IT HONESTLY
+
+   The manual's own guidance: rely on this only in the vicinity
+   of obstacles — for example while applying an adhesive — and
+   remember that high accelerations or large movements produce
+   high torque peaks. It is not a general-purpose crash sensor
+   bolted over a whole program, and it is NOT a certified safety
+   function. It is a process guard for the few millimetres where
+   contact is plausible.
+
+   Note also that SetTorqueLimits is a motion command: it goes in
+   the queue and takes effect at its position in the sequence,
+   not immediately. That is exactly what you want — tighten the
+   limits just before the delicate move and release them after.
+
+   Torque limits can only be applied once the robot is activated.
+
+   ------------------------------------------------------------
+   CAUTION
+
+   The block below deliberately sets tight torque limits. On a
+   robot with a real payload this may trip during ordinary
+   motion. Start with the values here on a bare robot, and raise
+   them if you get spurious [3029] errors.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(20)
+SetCartLinVel(60)
+
+MoveJoints(0, 0, 0, 0)
+
+
+/* --- Declaring the payload -------------------------------------
+   A small tool on the shaft: say 0.1 kg, its centre of mass
+   15 mm below the end of the shaft, on the axis. Replace with
+   your real numbers. */
+
+SetPayload(0.1, 0, 0, -15)
+
+MovePose(170, 0, 100, 0)
+Delay(1)
+
+
+/* --- Payload changes during the cycle --------------------------
+   Holding a 0.2 kg part triples the mass and moves the centre of
+   mass further down. Declaring it is one line, and it is the
+   difference between the datasheet accuracy and something worse. */
+
+MoveLin(170, 0, 60, 0)
+Delay(0.5)
+// (grip the part here)
+
+SetPayload(0.3, 0, 0, -30)             // tool + part
+
+MoveLinRelWrf(0, 0, 40, 0)
+MovePose(170, 60, 100, 0)
+MoveLin(170, 60, 60, 0)
+Delay(0.5)
+// (release the part here)
+
+SetPayload(0.1, 0, 0, -15)             // tool alone again
+
+MoveLinRelWrf(0, 0, 40, 0)
+Delay(1)
+
+
+/* --- Torque limits around one delicate move --------------------
+   The pattern to actually use: tighten just before the move that
+   might touch something, release immediately after. */
+
+// Report and error if torque deviates from prediction.
+SetTorqueLimitsCfg(4, 2)
+
+MovePose(170, 0, 100, 0)
+
+// Tighten, for the descent only. 25% deviation is a cautious
+// starting point above the manual's "about 10"; tune it down on
+// your own trajectory.
+SetTorqueLimits(25, 25, 25, 25)
+SetCartLinVel(15)                      // slow, because contact is plausible
+
+MoveLin(170, 0, 60, 0)
+Delay(0.5)
+MoveLinRelWrf(0, 0, 40, 0)
+
+// Release for ordinary travel.
+SetTorqueLimits(100, 100, 100, 100)
+SetCartLinVel(150)
+
+
+// --- Back to defaults and home --------------------------------
+// The firmware defaults are 0 kg payload, 100% torque limits,
+// and severity 0 with mode 2 — severity 0 meaning a trip takes
+// no action. Note there is no "off" detection mode; severity is
+// what decides whether a trip does anything.
+SetPayload(0, 0, 0, 0)
+SetTorqueLimits(100, 100, 100, 100)
+SetTorqueLimitsCfg(0, 2)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. SetPayload is the easiest accuracy win there is and it is
+      routinely skipped. Ask whether they declare payload on
+      their current robots. Often the honest answer is no, and
+      you have just explained some of their accuracy complaints.
+
+   2. The tighten-then-release pattern is the one to show an
+      integrator doing assembly or dispensing. It is specific,
+      it is bounded, and it does not pretend to be more than it
+      is.
+
+   3. Be precise about what this is not. Torque limiting is a
+      process guard, not a safety rating. Overselling it is the
+      fastest way to lose a technical buyer.
+
+   NEXT   06_time_based_motion.mxprog
+   --------------------------------------------------------------- */

@@ -1,0 +1,208 @@
+/* ==============================================================
+   02 — MoveJoints: the joint-space move
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   What a joint move is, what the four numbers mean, and
+             when to reach for it
+   NEEDS     Robot activated, no tool mounted
+   WATCH     All four joints start together and stop together
+   TIME      ~25 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   WHAT IS A JOINT MOVE?
+
+   An MCS500 is a SCARA: an arm that swings in a horizontal
+   plane, with a vertical shaft at the end that moves up and down
+   and turns. It has four joints, and a joint move tells each one
+   where it should end up. Nothing else.
+
+       MoveJoints(θ1, θ2, d3, θ4)
+
+     θ1   joint 1, the shoulder: swings the whole arm about the
+          base, in degrees
+     θ2   joint 2, the elbow: swings the outer link, in degrees
+     d3   joint 3, the shaft going up and down, in MILLIMETRES
+     θ4   joint 4, the shaft turning about its own axis, in
+          degrees
+
+   Read that third one twice. Joint 3 is not a rotation: it is a
+   straight-line slide, so its number is a distance. 0 is the
+   shaft all the way up, -102 is all the way down. Every other
+   joint number in this repo is an angle.
+
+   (Joints 3 and 4 are both produced by the same ball-screw
+   spline shaft, driven by two nuts — which is why the manual
+   calls them "independent degrees of freedom" rather than links.
+   For programming, they are simply two joints.)
+
+   All zeros is the robot's "zero position": the arm fully
+   stretched, pointing straight out in front of the base, with
+   the shaft all the way up. The end of the shaft is then 225 mm
+   out from the base axis (100 mm of inner link plus 125 mm of
+   outer link) and 109 mm above the bench.
+
+   This is the most direct thing you can ask a robot to do. There
+   is no maths between your command and the motors: you name the
+   positions, the joints go to them.
+
+   THE PART CUSTOMERS ASK ABOUT
+
+   The robot does NOT move each joint one after another, and it
+   does not move them all at full speed until each arrives. It
+   SYNCHRONISES them: every joint starts at the same instant, and
+   every joint arrives at the same instant. The joint that needs
+   the LONGEST TIME sets the pace; the others are slowed to
+   match. That is what makes the motion look like one gesture
+   instead of four.
+
+   Note: the longest TIME, not the longest distance. On this
+   robot that difference is large. Joint 4 can turn at 5,000
+   deg/s; joint 1 tops out at 300 deg/s. A half turn of the shaft
+   is nothing next to a quarter turn of the whole arm. The last
+   move below shows it.
+
+   THE TRADE-OFF
+
+   Because you specified joint positions and not a position in
+   space, the TOOL TIP takes whatever path falls out of the
+   geometry. It is smooth and it is repeatable — run it a
+   thousand times and you get the same curve — but in the
+   horizontal plane it is a curve, not a straight line, and it is
+   hard to predict by eye.
+
+   So:
+     - Use MoveJoints to REPOSITION. Getting from one side of the
+       cell to the other, going to a park position, clearing an
+       obstacle. It is the fastest and least constrained way to
+       move, and it can never fail because of a singularity.
+     - Use MoveLin when the PATH ITSELF matters. Sliding a part
+       along a fixture, laying a bead, pushing a connector home.
+       See 04_move_lin.mxprog.
+
+   A joint move only fails for one reason: a target outside the
+   joint's limits. The robot checks this before it starts moving,
+   so a bad target does not produce a half-completed motion — it
+   produces an error and a robot that has not moved.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+// Slow, so the demo is legible and safe to stand next to.
+// This is a percentage of each joint's top speed, not a
+// velocity. Raise it to 100 to show the real cycle time.
+SetJointVel(15)
+
+
+// --- Start from the zero position -----------------------------
+// All four joints at zero: arm straight out in front, shaft up.
+// Every example in basic/ starts and ends here, so you can run
+// them back to back without re-jogging the robot.
+MoveJoints(0, 0, 0, 0)
+
+Delay(1)
+
+
+// --- One joint at a time --------------------------------------
+// Only the first number changes, so only joint 1 turns: the whole
+// arm swings 45 deg about the base. This is the clearest way to
+// show someone what the four numbers actually mean.
+MoveJoints(45, 0, 0, 0)
+
+Delay(1)
+
+// Now joint 2 bends the elbow 60 deg, while joint 1 stays where
+// it is. Watch the end of the shaft: it swings through an arc.
+// Nobody asked for that arc — it is simply what the geometry
+// does when the elbow rotates.
+MoveJoints(45, 60, 0, 0)
+
+Delay(1)
+
+// Joint 3: the shaft drops 50 mm, straight down. The one joint
+// whose motion IS a straight line, and the number is in mm.
+MoveJoints(45, 60, -50, 0)
+
+Delay(1)
+
+// Joint 4: the shaft turns a quarter turn about its own axis.
+// With no tool fitted you will barely see it — watch the flat
+// machined on the shaft, or stick a piece of tape on it. With a
+// tool fitted, this is the joint that turns the part.
+MoveJoints(45, 60, -50, 90)
+
+Delay(1)
+
+
+// --- All four at once -----------------------------------------
+// The interesting one. Every joint has a different distance to
+// travel:
+//
+//     joint 1   +45 to -45    90 deg    at up to   300 deg/s
+//     joint 2   +60 to +90    30 deg    at up to   500 deg/s
+//     joint 3   -50 to -20    30 mm     at up to   700 mm/s
+//     joint 4   +90 to -90   180 deg    at up to 5,000 deg/s
+//
+// Joint 4 travels furthest, and it does not matter: it could do
+// its half turn in a fraction of the time. Joint 1 needs the
+// longest, so joint 1 sets the pace.
+//
+// Watch the start and the finish, not the middle: everything
+// begins moving in the same instant and everything settles in
+// the same instant. That is the synchronisation described above.
+MoveJoints(-45, 90, -20, -90)
+
+Delay(1)
+
+
+// --- Back to zero ---------------------------------------------
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Select any single MoveJoints line and press Ctrl+Enter to
+      run just that line. Change one number, run it again. This
+      is the fastest way to make the four-numbers idea land.
+
+   2. Change SetJointVel(15) to SetJointVel(100) and run the whole
+      file. Same path, same targets — dramatically shorter cycle.
+      Speed is a setting, not a rewrite. Give it room: a SCARA at
+      full speed is quick.
+
+   3. Try MoveJoints(0, 150, 0, 0). The robot refuses and reports
+      an error, because joint 2 stops at 145 deg. Note that it
+      refuses BEFORE moving. Then press the run button (now red)
+      to reset the error, and resume.
+
+   4. Try MoveJoints(0, 0, 0, 720), then MoveJoints(0, 0, 0, 0).
+      The shaft turns two full turns and back, and the arm looks
+      identical at both ends. Joint 4 is a motor angle, not a
+      direction — 02_intermediate/05 is about exactly that.
+
+   NEXT   03_move_pose.mxprog — naming a position in space
+          instead of a set of joint positions.
+   --------------------------------------------------------------- */

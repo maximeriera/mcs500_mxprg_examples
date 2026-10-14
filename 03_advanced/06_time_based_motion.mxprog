@@ -1,0 +1,208 @@
+/* ==============================================================
+   06 — Time-based motion
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   SetMoveMode, SetMoveDuration, SetMoveDurationCfg
+   NEEDS     Robot activated, no tool mounted
+   WATCH     Four moves of very different lengths, all taking
+             the same time
+   TIME      ~30 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   A DIFFERENT QUESTION
+
+   Every example so far has asked "how fast should the robot go?"
+   and let the duration fall out of that.
+
+   Sometimes the requirement is the other way round. A machine
+   indexes every 1.2 seconds. A camera exposes on a fixed
+   interval. Two axes have to arrive together. In those cases you
+   do not care about velocity — you care that the move takes
+   as long as it is supposed to.
+
+       SetMoveMode(m)
+
+     m = 0   velocity-based (default). SetJointVel,
+             SetCartLinVel and SetCartAngVel govern.
+     m = 1   time-based. SetMoveDuration governs, and the
+             velocity settings are ignored.
+
+       SetMoveDuration(t)     t in seconds; default 3
+
+   In time-based mode the robot computes whatever velocity
+   profile makes the move take t seconds. A 5 mm move and a
+   200 mm move both take t. The short one crawls, the long one
+   hurries, and both land on the beat.
+
+   One precision from the manual: the duration you set does not
+   include the acceleration and deceleration ramps — they come on
+   top. Time a move once if you need the exact total.
+
+   WHY THIS IS USEFUL
+
+     - Synchronising to an external cycle: the robot's move is
+       the same length every time, so the machine's timing does
+       not depend on where the part happened to be.
+     - Smoothness: a long slow move at a computed constant pace
+       is gentler than one clipped by a velocity limit.
+     - Predictable cycle time, which is what a customer actually
+       budgets in — not peak velocity.
+
+   WHAT IF IT CANNOT?
+
+   You can ask for a duration that is physically impossible. What
+   happens then is your choice:
+
+       SetMoveDurationCfg(s)
+
+     s = 0   silent, do it as fast as possible
+     s = 1   log a warning saying the shortest possible duration
+     s = 4   raise error [3051], also naming the shortest
+             possible duration                        (default)
+
+   Severity 1 is the useful one during development: the warning
+   tells you the fastest the move can actually go, which is
+   exactly the number you need to choose a realistic duration.
+   The default of 4 is the right production setting — if the
+   machine's timing cannot be met, you want to know loudly, not
+   quietly drift out of sync.
+
+   Note that SetMoveDuration(0) means "as fast as possible", but
+   only when the severity is 0 or 1.
+
+   And the time-scaling slider still applies on top: at 50%,
+   every move takes twice as long, whatever SetMoveDuration
+   says. The robot checks your durations against the unscaled
+   numbers, so a program does not have to change to be run
+   slowly.
+
+   THE ONE COMMAND THAT MUST STAY OUT
+
+   MoveJump is not supported in time-based mode, and the manual
+   says it must not be used there. If a program mixes the two,
+   switch back with SetMoveMode(0) before the first jump. As
+   always, these settings return to their defaults on activation.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+
+/* --- Velocity-based: the default -------------------------------
+   Four moves of increasing length. Time them roughly — each one
+   takes noticeably longer than the last, because they all run at
+   the same speed over different distances. */
+
+SetMoveMode(0)
+SetCartLinVel(100)
+
+MovePose(170, 0, 80, 0)
+Delay(0.5)
+
+MoveLin(170, 10, 80, 0)                // 10 mm
+Delay(0.5)
+MoveLin(170, -30, 80, 0)               // 40 mm
+Delay(0.5)
+MoveLin(170, 60, 80, 0)                // 90 mm
+Delay(0.5)
+MoveLin(170, -60, 80, 0)               // 120 mm
+Delay(1.5)
+
+
+/* --- Time-based: every move takes 1.5 s ------------------------
+   Identical destinations. Now watch the clock instead of the
+   robot: the 10 mm move and the 120 mm move take the same time.
+
+   The short move is visibly, deliberately slow. That is not the
+   robot struggling — it is the robot hitting a deadline. */
+
+SetMoveMode(1)
+
+// Warn rather than error if a duration cannot be met, so this
+// file runs to the end and tells us the shortest achievable time
+// in the log panel.
+SetMoveDurationCfg(1)
+
+SetMoveDuration(1.5)
+
+MovePose(170, 0, 80, 0)
+Delay(0.5)
+
+MoveLin(170, 10, 80, 0)                // 10 mm, in 1.5 s
+Delay(0.5)
+MoveLin(170, -30, 80, 0)               // 40 mm, in 1.5 s
+Delay(0.5)
+MoveLin(170, 60, 80, 0)                // 90 mm, in 1.5 s
+Delay(0.5)
+MoveLin(170, -60, 80, 0)               // 120 mm, in 1.5 s
+Delay(1.5)
+
+
+/* --- Asking for the impossible ---------------------------------
+   20 milliseconds for a 120 mm move is not going to happen. With
+   severity 1 the robot moves as fast as it can and logs a
+   warning naming the shortest duration it could actually
+   achieve.
+
+   Watch the log panel for that number — during development it is
+   the most useful output this feature produces. */
+
+SetMoveDuration(0.02)
+MoveLin(170, 60, 80, 0)
+
+Delay(1)
+
+
+// --- Back to velocity mode and home ---------------------------
+SetMoveMode(0)
+SetMoveDurationCfg(4)
+SetCartLinVel(150)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Run the two blocks back to back with a stopwatch on the
+      screen. Four moves, four different distances, one duration.
+      It is a strange thing to watch and it sticks.
+
+   2. This feature only sells to people with a timing problem —
+      indexing machines, camera-synchronised inspection, motion
+      that has to match a conveyor. Ask whether anything in their
+      cycle has to happen on a fixed beat. If nothing does, move
+      on; if something does, this is often the whole reason they
+      choose the robot.
+
+   3. The impossible-duration warning is worth showing to an
+      engineer. A controller that tells you the fastest it could
+      have gone is a controller someone thought about.
+
+   NEXT   07_singularities.mxprog — the one place on a SCARA
+          where the arm runs out of directions.
+   --------------------------------------------------------------- */

@@ -1,0 +1,289 @@
+/* ==============================================================
+   01 — Your first program: getting the robot ready to move
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   What a .mxprog file is, and the commands that take a
+             robot from powered-on to ready for motion
+   NEEDS     Robot powered on, motors powered (RESET pressed on
+             the power supply), connected in CONTROL mode.
+             Nothing else — this file does the rest.
+   WATCH     The arm straightens, then makes one small move
+   TIME      ~15 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   /!\ BEFORE YOU PRESS RUN
+
+   This program moves the arm to its ZERO POSITION: fully
+   stretched straight out in front of the base, with the shaft
+   all the way up. From wherever it was left, that can be a large
+   sweep of the whole arm. Clear the area in front of and around
+   the robot first.
+
+   The MCS500's power supply has a key switch. In AUTOMATIC the
+   robot runs once its motors are powered. In MANUAL it only
+   moves while someone holds the enabling device halfway. In
+   LOCKED it will not power its motors at all. If ActivateRobot
+   below fails, that switch and the RESET button are the first
+   two things to check.
+
+   If you are not sure the poses are clear on your setup, run it
+   in simulation first — deactivate the robot and send
+   ActivateSim(1). See the README.
+   --------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------
+   THE WHOLE IDEA
+
+   This file is a plain text file. Each line is one command. The
+   robot reads them top to bottom and does them in that order.
+
+   That is the entire programming model. There is no project
+   file, no compile step, no runtime to install. What you type is
+   what gets sent to the robot.
+
+   WHAT THIS LANGUAGE DOES NOT HAVE
+
+   No IF. No WHILE. No FOR. No jumps, no labels, no branching.
+
+   That surprises people, so be ready for it. It is not a missing
+   feature — it is the product decision that defines Mecademic.
+   An MCS500 is a precision motion component, not a controller
+   trying to be a PLC. The application logic — the state machine,
+   the vision result, the recipe selection, the error recovery —
+   lives in the customer's PC, IPC or PLC, in whatever language
+   they already use. The robot is handed motion, and it executes
+   motion beautifully.
+
+   COMMENTS
+
+   Comments are C/C++ style. This block you are reading is a
+   block comment, opened with slash-star and closed with
+   star-slash. A double slash comments to the end of the line.
+
+   In the MecaPortal editor, Ctrl+/ toggles comments on whatever
+   lines you have selected. Command names are case-insensitive,
+   so SetWrf, SetWRF and setwrf all reach the same command — but
+   pick one style and keep to it.
+
+   UNITS
+
+   Millimetres. Degrees. Seconds. Always, everywhere, with no
+   setting to change and no way to get it wrong.
+   --------------------------------------------------------------- */
+
+
+/* ==============================================================
+   PART 1 — MAKING THE ROBOT READY FOR MOTION
+   ==============================================================
+
+   An MCS500 that has just been powered on will refuse every
+   motion command you send it. Four commands fix that, and they
+   have to happen in this order.
+
+   The useful property: ALL OF THEM ARE SAFE TO RUN EVERY TIME.
+   Steps 1 to 3 are idempotent — none fails if the robot is
+   already in the state it asks for, each just reports that there
+   was nothing to do. Step 0 is the exception and is explained
+   below. So this block can sit at the top of any program without
+   you having to know what state the robot was left in, which is
+   exactly why every example in this repo opens with it.
+
+   Watch the log panel while this runs. Each command answers.
+   --------------------------------------------------------------- */
+
+/* 0. DROP EVERYTHING THE LAST PROGRAM LEFT BEHIND.
+      Deactivating loses every non-persistent setting: tool and
+      world frames, speeds, blending, payload, torque limits,
+      posture and turn selection, move mode, MoveJump heights.
+      They all return to firmware defaults when the robot comes
+      back up.
+      Answers [2004] Motors deactivated.
+
+      This is the one command here that is NOT idempotent — it
+      can only run when the robot is activated, and answers with
+      an error if it is not. That is harmless: on a robot fresh
+      from power-on there is nothing to deactivate and nothing
+      to clear, so the error is expected and the rest of the file
+      continues normally.
+
+      It does not move the arm. It does NOT reset persistent
+      settings — joint limits, work zone, tool sphere, collision,
+      P-Stop 2 and calibration config all survive. See
+      00_common/00_cold_start.mxprog for those. */
+DeactivateRobot()
+
+
+/* 1. ENERGISE THE MOTORS.
+      Activates all motors and releases the joint brakes.
+      Answers [2000] Motors activated.
+
+      Can be run in ANY robot state. If the robot is already
+      activated, it answers and does nothing — which is why it is
+      safe here unconditionally.
+
+      If it answers [1013] Activation failed instead, the motors
+      have no power: a stop signal is active, or nobody has
+      pressed RESET since power-up or since the key switch moved. */
+ActivateRobot()
+
+
+/* --- WHERE IS Home()? ------------------------------------------
+      If you have used a Meca500, you are waiting for a homing
+      step here. There is none. The MCS500 has high-accuracy
+      ABSOLUTE encoders: it knows where every joint is from the
+      moment it powers up, so an activated MCS500 is immediately
+      ready for motion.
+
+      The robot will accept a Home() command, and ignore it — the
+      manual says it has effect only on the Meca500. Leave it out
+      rather than teach a step that does nothing.
+
+      The one rule the absolute encoders impose: never turn the
+      shaft (joint 4) by hand beyond plus or minus ten turns, for
+      example with the brakes released. That is the range the
+      encoder can count. */
+
+
+/* 2. CLEAR ANY FAULT.
+      Acknowledges and clears an error state left over from a
+      previous run — a collision, a work zone breach, a torque
+      limit trip.
+      Answers [2005] if there was an error to reset, or [2006]
+      if there was not. Both are fine.
+
+      ORDER MATTERS HERE. ResetError can only run once the robot
+      is "ready for motion", which on the MCS500 simply means
+      activated. So it goes after ActivateRobot, not before. A
+      robot that errors while DEACTIVATED never enters an error
+      state at all and needs no reset.
+
+      Note that clearing a fault does not resume motion — that is
+      the next command, and it is the step people forget. */
+ResetError()
+
+
+/* 3. RELEASE THE MOTION QUEUE.
+      Resumes movement if it was paused: by ResetError above, by
+      a PauseMotion command, by a torque overload configured in
+      pause-motion mode, or by a P-Stop 2 signal that has since
+      cleared.
+      Answers [2043] Motion resumed.
+
+      Leaving this out is the classic "I cleared the error and it
+      still will not move" problem. */
+ResumeMotion()
+
+
+/* --- The robot is now ready for motion -------------------------
+   From here on, motion commands will be accepted.
+
+   In the MecaPortal you would normally do all of the above with
+   the buttons in the toolbar. They are written out here because
+   a host program has to send exactly these, in exactly this
+   order, and because seeing them makes the robot's state model
+   concrete.
+
+   WHAT THIS DOES *NOT* DO
+
+   Ready for motion is not the same as predictable. These
+   commands (after Deactivate) do not clear anything persistent
+   the previous user left behind — not a restricted joint limit,
+   not a work zone, not simulation mode — and they do not touch
+   the time-scaling slider either.
+
+   Deactivate only wipes every non-persistent setting in one
+   stroke.
+
+   If you are on a robot you do not know, and you want the demo
+   to behave the way it behaved when you rehearsed it, run
+   00_common/00_cold_start.mxprog instead of this file.
+   --------------------------------------------------------------- */
+
+
+/* ==============================================================
+   PART 2 — PUTTING THE SETTINGS IN A KNOWN STATE
+   ============================================================== */
+
+/* Being ready to move is not the same as being ready to run YOUR
+   program. Speeds, reference frames, blending and posture are
+   all still whatever the last program left behind.
+
+   That is what the init helper is for. One line, and every
+   setting this repo cares about is explicit:
+
+       StartProgram("00_common/01_init")
+
+   It is commented out below because StartProgram only finds
+   programs already SAVED ON THE ROBOT. Save
+   00_common/01_init.mxprog as "00_common/01_init" first, then
+   uncomment. Read 00_common/01_init.mxprog — it is the most
+   reusable thing in this repo. */
+
+// StartProgram("00_common/01_init")
+
+// Until you have saved it, set the two that matter here:
+SetJointVel(15)
+SetBlending(100)
+
+
+/* ==============================================================
+   PART 3 — A FIRST MOVE
+   ============================================================== */
+
+// Move to the zero position: all four joints at zero. The arm
+// points straight out in front of the base, fully stretched,
+// with the shaft all the way up. It is the position the
+// MecaPortal's "Zero all joints" button goes to, and the one the
+// manual suggests parking in before you power off.
+MoveJoints(0, 0, 0, 0)
+
+// Rotate joint 1 by 30 degrees. The whole arm swings about the
+// base. Nothing else moves, because none of the other three
+// numbers changed.
+MoveJoints(30, 0, 0, 0)
+
+// Back to where we started.
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   ONE THING THAT IS NOT OBVIOUS: THE MOTION QUEUE
+
+   The readiness commands in Part 1 are ROBOT CONTROL commands:
+   they execute immediately, the moment the robot receives them.
+
+   The three moves in Part 3 are MOTION commands: they go into a
+   MOTION QUEUE and are worked through in order, first in first
+   out.
+
+   So "the program finished" and "the robot stopped moving" are
+   two different moments. All three moves can be sitting in the
+   robot before the arm has finished the first one.
+
+   This matters as soon as you coordinate with anything outside
+   the robot — a vacuum cup, a conveyor, a camera. The tool for
+   that is SetCheckpoint(), covered in
+   07_delay_and_sequencing.mxprog.
+
+   THINGS TO TRY
+
+   1. Select just the line MoveJoints(30, 0, 0, 0) and press
+      Ctrl+Enter. Only that line runs. This is how to demo a
+      single command without running the whole file, and it is
+      one feature that makes the MecaPortal genuinely useful.
+
+   2. Run the whole file twice in a row and watch the log panel.
+      The second time, ResetError answers [2006] — there was no
+      error to reset — and does nothing. No failure, no special
+      case. That is what "safe to run every time" looks like.
+
+   3. Force an error to see step 2 work: run
+      MoveJoints(0, 0, 10, 0), which asks joint 3 — the shaft —
+      to rise 10 mm above its top stop. Its range is -102 to 0
+      mm. The robot refuses and goes into error. Now run this
+      file again — ResetError clears it and ResumeMotion releases
+      the queue, with no button pressing.
+
+   NEXT   02_move_joints.mxprog — what those four numbers are.
+   --------------------------------------------------------------- */

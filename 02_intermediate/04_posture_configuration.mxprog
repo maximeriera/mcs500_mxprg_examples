@@ -1,0 +1,197 @@
+/* ==============================================================
+   04 — Posture configuration: two ways to reach one pose
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   SetConf, SetAutoConf — lefty and righty
+   NEEDS     Robot activated, plenty of clear space around the arm
+   WATCH     The tool tip stays put while the elbow swaps sides
+   TIME      ~35 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE THING NOBODY MENTIONS UNTIL IT BITES
+
+   A pose says where the tool tip is and how it is turned. Four
+   numbers. But a two-link arm can usually reach the same point
+   in TWO different ways: with the elbow bent one way, or bent
+   the other. Mirror images of each other, about the line from
+   the base to the tool.
+
+   Same tool tip. Same orientation. Completely different-looking
+   robot — and the elbow is on the opposite side of the arm.
+
+   One parameter says which:
+
+       SetConf(ce)
+
+     ce =  1   "righty"   joint 2 positive
+     ce = -1   "lefty"    joint 2 negative
+
+   (The names come from human arms. Look down on your own right
+   arm reaching forward across a desk: the elbow sits out to the
+   right, and the forearm angles back in. That is righty.)
+
+   Two options, one parameter. The six-axis Meca500 needs three
+   parameters and has up to eight postures; the SCARA's whole
+   story is two.
+
+   WHY YOU SHOULD CARE
+
+   The two postures are geometrically equivalent and practically
+   very different:
+
+     - the ELBOW is on opposite sides. In a cell with a wall, a
+       feeder or a person on one side, one posture swings the
+       elbow into it and the other does not
+     - one may be far from a joint limit and the other close to
+       it, or out of reach altogether
+     - and if the robot silently changes posture between two
+       cycles, the arm swings through a large, unexpected motion
+       to get there — the classic "it moved somewhere strange"
+       report
+
+   NOT EVERY POINT HAS TWO
+
+   In front of the robot, nearly every reachable point can be
+   reached both ways. Behind the base, out to each side, it is
+   different: joint 1 runs out of range for one of the two, so
+   one side can only be reached lefty and the other only righty.
+   The user manual's workspace drawing shows the zones; the robot
+   will tell you too, by refusing.
+
+   BY DEFAULT: AUTOMATIC
+
+   Automatic posture selection is on by default. The robot picks
+   the posture that is fastest to reach from where it currently
+   is, which keeps motion small.
+
+       SetAutoConf(1)    robot chooses (default)
+       SetAutoConf(0)    freeze the current posture
+       SetConf(ce)       demand a specific posture
+                         (this also switches automatic off)
+
+   THE RULE OF THUMB
+
+   In a real cell, pin the configuration with SetConf at the
+   start of the program. The manual goes further than most
+   manuals do: it strongly recommends always specifying it, and
+   warns that automatic selection may pick differently after a
+   small change in a target — or after a firmware update that
+   improves the selection algorithm. It costs one line and it
+   removes an entire category of intermittent, hard-to-reproduce
+   faults — the ones where a cell runs for three weeks and then
+   one cycle takes the long way round.
+
+   MoveLin has a stricter rule: a linear move holds its posture
+   for the whole path and CANNOT change it — physically, not as a
+   policy. If a MoveLin is refused for no obvious reason, the
+   start and end postures disagreeing is a prime suspect.
+
+   THIS EXAMPLE MOVES A LOT
+
+   Switching posture swings the elbow from one side to the other,
+   straightening the arm on the way. Give the robot room and run
+   it slowly the first time.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(15)
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+
+/* --- Automatic: the default ------------------------------------
+   The robot reaches this pose whichever way is fastest from
+   where it already is. Starting from the straight arm, either
+   way is equally short, so which one you get is the
+   controller's call — which is the behaviour we are about to
+   remove. */
+SetAutoConf(1)
+MovePose(150, 0, 80, 0)
+Delay(2)
+
+
+/* --- The same pose, demanded both ways -------------------------
+   Every MovePose line below is IDENTICAL. Only the SetConf above
+   it changes. The tool tip goes to the same point in space every
+   time, and the elbow swaps sides.
+
+   This is the demo. Cover the code, let them watch the arm
+   rearrange itself, and then reveal that the motion command
+   never changed. */
+
+SetConf(1)                  // righty
+MovePose(150, 0, 80, 0)
+Delay(2)
+
+SetConf(-1)                 // lefty
+MovePose(150, 0, 80, 0)
+Delay(2)
+
+SetConf(1)                  // righty again
+MovePose(150, 0, 80, 0)
+Delay(2)
+
+
+/* --- Pinning it for a real program -----------------------------
+   This is the pattern to actually use. Choose the posture once,
+   at the top, and every pose below is reached the same way,
+   every cycle, forever. */
+
+SetConf(1)
+
+MovePose(170, -50, 80, 0)
+MovePose(170, 50, 80, 0)
+MovePose(190, 0, 90, 0)
+
+
+// --- Hand control back and go home ----------------------------
+SetAutoConf(1)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. The lefty-righty swap is one of the best visual demos the
+      robot has. It needs no fixture and no tool, and it explains
+      inverse kinematics without the word being said.
+
+   2. Ask an integrator whether their current robot ever "takes a
+      strange route" between two taught points. If yes, this is
+      usually the reason, and SetConf is the fix.
+
+   3. Jog the arm behind the base, out to one side, and try
+      MovePose to that point under SetConf(1) and then
+      SetConf(-1). One works and one is refused — before
+      anything moves. Demanding a posture the pose cannot be
+      reached in produces an error and a stationary robot, not a
+      half-finished move.
+
+   NEXT   05_turn_configuration.mxprog — the same idea for the
+          turning shaft, and the one that saves cables.
+   --------------------------------------------------------------- */

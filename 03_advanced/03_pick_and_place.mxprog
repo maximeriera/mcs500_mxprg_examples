@@ -1,0 +1,402 @@
+/* ==============================================================
+   03 — Pick and place: the full demo
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   Everything above, assembled into one cycle
+   NEEDS     Robot activated. Tool optional — see TOOL below.
+   WATCH     A four-part tray cycle that looks like a product
+   TIME      ~30 s for the full cycle
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   WHAT THIS IS
+
+   The demo to run when someone says "show me what it does". It
+   picks four parts from a row and places them into a 2x2 tray,
+   turning each one a quarter turn on the way, and it is built
+   entirely from the pieces in basic/ and intermediate/ — no new
+   commands.
+
+   Read it as a worked example of how the pieces fit:
+
+     WRF          all coordinates are relative to the fixture,
+                  so moving the fixture is a one-line change
+     TRF          poses refer to the tool tip, 30 mm below the
+                  shaft
+     SetConf      posture pinned, so every cycle is identical
+     SetConfTurn  turn pinned, so a cabled tool comes back the
+                  same way round every cycle
+     MoveJump     every transfer: lift, travel, land, in one
+                  command each
+     Blending     off throughout, because MoveJump requires it —
+                  the jumps are smooth on their own
+     Checkpoints  so a host knows where the robot actually is
+
+   Compare it with the Meca500 version of this demo, if you have
+   seen it: each pick there is six lines of MovePose, MoveLin and
+   relative moves. Here it is one MoveJump. That is the SCARA.
+
+   THE STRUCTURE
+
+   Notice what this file does NOT have: a loop. Four picks means
+   four blocks, written out. That is the honest consequence of a
+   robot with no flow control, and it is worth showing rather
+   than hiding — then explain that in production the host issues
+   StartProgram("cell/pick") four times with a different variable
+   each time, and the repetition disappears. See 01_variables and
+   02_program_calls.
+
+   TOOL: WHAT THIS DEMO LEAVES OUT
+
+   The MCS500 has no tool I/O of its own: the manual says
+   end-of-arm tooling is controlled directly from your PLC. So
+   this program cannot close a gripper or switch on a vacuum —
+   and it should not try. At each pick and each place it stops,
+   reports a checkpoint, and waits for a moment. That pause is a
+   stand-in: it is where the host would work the tool.
+
+   Which also means this program assumes every grip works. A real
+   cell checks: switch the tool, ask whether a part is actually
+   held, and only then carry on; if it is not, release, lift, go
+   home, report the error and stop. The robot has no IF, so that
+   check lives in the host — and the program has to be split at
+   the grip to give the host the chance to make it.
+
+   The demo stays in one piece because it has to run from the
+   MecaPortal with nothing else connected. Its checkpoints 11, 21,
+   31, 41 sit exactly where a host would be listening; what is
+   missing is the other half of the conversation. IN A REAL CELL,
+   at the bottom of this file, puts it back. Run this one; build
+   that one.
+
+   GEOMETRY
+
+   Parts come from a row of four, 25 mm apart, and go into a 2x2
+   tray 30 mm apart. Both are defined relative to the WRF, whose
+   origin is on the fixture's top surface, so if you have a real
+   fixture, measure it once and change the single SetWrf line.
+   Every pick and place height is 10 mm above that surface — the
+   top of a 10 mm part.
+   --------------------------------------------------------------- */
+
+
+/* ============ SETUP ========================================== */
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+/* Start from a known state. Everything this program does not
+   explicitly set — payload, torque limits, move mode, joint
+   velocity limit — comes from here rather than from whatever ran
+   before it.
+
+   Save 00_common/01_init.mxprog on the robot as
+   "00_common/01_init" first, or this reports [3017]. If you have
+   not, comment the line out and uncomment the fallback block
+   below it. */
+StartProgram("00_common/01_init")
+
+/* --- Overrides for THIS program ------------------------------
+   Everything below deliberately overrides what 00_common/01_init
+   set. That is the pattern: init establishes the house defaults,
+   the program states its own needs, and nothing is inherited by
+   accident. */
+
+// Speed. MoveJump is a joint-space move, so this one number is
+// the whole tuning conversation for this program.
+SetJointVel(30)
+
+// Pin the arm posture and the shaft's turn so every cycle is
+// identical. 00_common/01_init leaves automatic selection on,
+// which is the safe general default; a production cycle wants
+// both pinned. Righty, normal turn range.
+SetConf(1)
+SetConfTurn(0)
+
+// The tool: the house tool from intermediate/02, its tip 30 mm
+// below the end of the shaft. Put in your real length.
+SetTrf(0, 0, -30, 0)
+
+// The fixture. Everything below is measured from here, so this
+// is the only line that changes when the fixture moves: its top
+// surface, 150 mm in front of the robot and 20 mm above the
+// bottom of the base.
+SetWrf(150, 0, 20, 0)
+
+// MoveJump needs blending off between jumps.
+SetBlending(0)
+
+// The shape of every hop: lift and land through 20 mm of
+// straight vertical, and peak 25 to 35 mm above the higher end —
+// clear of the parts still in the row.
+SetMoveJumpHeight(20, 20, 25, 35)
+
+/* --- Fallback, if 00_common/01_init is not saved on the robot -
+   Uncomment these if you commented out the StartProgram above. */
+// SetMoveMode(0)
+// SetJointVelLimit(100)
+// SetMoveJumpApproachVel(10, 1, 10, 1)
+// SetPayload(0, 0, 0, 0)
+// SetTorqueLimits(100, 100, 100, 100)
+
+
+/* ============ HOME ========================================== */
+
+MoveJoints(0, 0, 0, 0)
+MovePose(0, 0, 20, 0)                  // hover above the fixture
+SetCheckpoint(1)                       // "ready, tray may be loaded"
+
+
+/* ============ PART 1 ======================================== */
+/* Pick from row position 1, place into tray cell 1.
+
+   Read this block carefully — the three below are identical
+   except for the two coordinate lines, and that repetition is
+   the point being made in the header. */
+
+// -- pick --
+MoveJump(-40, -50, 10, 0)              // hop onto the part
+SetCheckpoint(11)                      // "at the part" — NOT
+                                       // proof that a part is held
+Delay(0.3)                             // TOOL: the host grips here
+// ^ In a real cell the program ENDS here. The host switches the
+//   tool, asks whether it is holding a part, then starts either
+//   the place program or the abort program. This demo cannot
+//   ask, so it carries on regardless. See IN A REAL CELL, below.
+
+// -- place --
+MoveJump(-10, 30, 10, 90)              // hop to the tray cell,
+                                       // turning a quarter turn
+SetCheckpoint(12)                      // "part 1 at the tray"
+Delay(0.3)                             // TOOL: the host releases here
+
+
+/* ============ PART 2 ======================================== */
+
+MoveJump(-15, -50, 10, 0)
+SetCheckpoint(21)
+Delay(0.3)
+
+MoveJump(20, 30, 10, 90)
+SetCheckpoint(22)
+Delay(0.3)
+
+
+/* ============ PART 3 ======================================== */
+
+MoveJump(10, -50, 10, 0)
+SetCheckpoint(31)
+Delay(0.3)
+
+MoveJump(-10, 60, 10, 90)
+SetCheckpoint(32)
+Delay(0.3)
+
+
+/* ============ PART 4 ======================================== */
+
+MoveJump(35, -50, 10, 0)
+SetCheckpoint(41)
+Delay(0.3)
+
+MoveJump(20, 60, 10, 90)
+SetCheckpoint(42)
+Delay(0.3)
+
+
+/* ============ FINISH ======================================== */
+
+MoveJump(0, 0, 20, 0)                  // back to the hover pose
+SetCheckpoint(99)                      // "cycle complete"
+
+// Put everything back to defaults so the next example starts
+// from a known state.
+SetWrf(0, 0, 0, 0)
+SetTrf(0, 0, 0, 0)
+SetAutoConf(1)
+SetAutoConfTurn(1)
+MoveJoints(0, 0, 0, 0)
+SetBlending(100)
+
+
+/* ---------------------------------------------------------------
+   IN A REAL CELL: THE GRIP HANDSHAKE
+
+   Everything above runs open loop. This is what a production
+   version of the same cycle does differently, and why.
+
+   THE HANDSHAKE
+
+       switch the tool on
+       ask: is it holding a part?
+         yes   carry on to the tray
+         no    release, lift, go home, report the error, stop
+
+   The robot cannot run this — there is no IF, and on the MCS500
+   it does not even own the tool. And it cannot be bolted onto the
+   program above either: by the time the tool has switched, the
+   jump to the tray is already queued behind it. The decision has
+   to be made BEFORE the next motion is queued, not while it is
+   running.
+
+   So the program is split at the grip. The pick program ends
+   with the tool down at the part. With nothing left in its
+   queue, the arm simply stays there. That pause is the host's
+   window to act and decide.
+
+   THE ROBOT PROGRAMS
+
+   Three programs, saved on the robot (see 02_program_calls):
+
+     cell/pick_1
+         MoveJump(-40, -50, 10, 0)
+         SetCheckpoint(11)            tool down at the part
+
+     cell/place_1
+         MoveJump(-10, 30, 10, 90)
+         SetCheckpoint(12)            tool down at the tray cell
+
+     cell/abort
+         MoveJump(0, 0, 20, 0)        straight up, then home
+         MoveJoints(0, 0, 0, 0)
+         SetCheckpoint(90)            "aborted, arm clear"
+
+   All three rely on the SETUP section of this file having run
+   first — the frames above all. Settings are sticky, so a cell
+   runs its setup once, then calls these as often as it likes.
+
+   The Delays are gone. They were a guess at how long the tool
+   takes; the host now waits for the tool to say so.
+
+   One abort program serves all four pick points, because a
+   MoveJump always lifts straight up first, wherever the tool
+   happens to be — it cannot drag sideways through the fixture.
+   Note the order: the host releases the tool BEFORE starting the
+   abort. That leaves a half-gripped part where it is, rather
+   than carrying something nobody is sure of.
+
+   THE HOST SIDE
+
+       StartProgram("cell/pick_1")
+       wait for [3030][11]           tool down at the part
+       switch the tool on            the host's own output
+       wait for "part held"          the tool's own feedback,
+         with a timeout              read by the host
+       decide:
+         held        StartProgram("cell/place_1")
+                     wait for [3030][12], release the tool,
+                     confirm it let go, carry on
+         missed      release the tool
+                     StartProgram("cell/abort")
+                     wait for [3030][90]
+                     raise the alarm, stop the cycle
+         timed out   a fault, not a miss: raise the alarm, and
+                     leave the arm where it is until someone
+                     has looked
+
+   Wait for the checkpoint FIRST. Before it arrives the tool may
+   not be at the part yet, and anything you switch or read is
+   early.
+
+   If [3040][11] arrives instead of [3030][11], the checkpoint was
+   discarded — the robot stopped in error or on a safety signal —
+   and the cycle is already over. That is the host's general
+   error handling, not this handshake.
+
+   What the operator does next — retry, skip that position, stop
+   the batch — is a host decision, made on the HMI. The robot
+   programs do not need to know.
+
+   WHERE "PART HELD" COMES FROM
+
+   From the tool, through the host's own I/O: an electric
+   gripper's "holding" signal, a vacuum switch on the suction
+   line, a presence sensor in the jaws. Whatever it is, it is
+   wired to the host, because the host is the one that has to
+   decide.
+
+   THE OTHER HANDSHAKES
+
+   The grip is the one that matters most, but a real cell has a
+   few more of the same shape:
+
+     before the pick     is there a part? A sensor or a camera,
+                         read by the host.
+     before the place    still holding? Parts get lost in
+                         transit. Same check, same split.
+     before the place    is the tray cell empty?
+     after the release   did it let go?
+
+   WHAT IT COSTS
+
+   Every split is a stop and a round trip to the host. That is
+   cheap next to a dropped part, but it is not free, and on a
+   SCARA — where cycle time is the reason it was bought — it
+   shows. Put decision points where a wrong answer costs
+   something. The grip always qualifies.
+   --------------------------------------------------------------- */
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Start at SetJointVel(30). Run it once at that speed so
+      people can follow what is happening.
+
+   2. Run it again at SetJointVel(100). Same program, one edited
+      number. This is the moment the cycle time argument gets
+      made, and it makes itself.
+
+   3. Have the log panel open. The checkpoint stream — 11, 12,
+      21, 22, ... 99 — is what a PLC integrator will actually be
+      looking at, and seeing it live is more useful to them than
+      watching the arm.
+
+   4. Change the single SetWrf line and run again. The whole
+      cycle relocates. If you have a fixture you can physically
+      move, this is the strongest thirty seconds in the demo.
+
+   QUESTIONS THIS WILL PROVOKE
+
+   "Why is every part written out four times?"
+      Because the robot has no loops. In production the host
+      calls one saved program four times with different
+      variables. Show advanced/01 and advanced/02.
+
+   "What if the part isn't there?"
+      The host knows, from the tool's own feedback or a sensor,
+      and decides: carry on, or abort, go home and raise the
+      alarm. See IN A REAL CELL. Whether a part is waiting to be
+      picked in the first place is a sensor or camera question —
+      also the host's.
+
+   "How do I switch the tool from the robot program?"
+      You do not, on the MCS500: the tool is wired to the PLC.
+      That sounds like a limitation until you notice the PLC is
+      already the one deciding whether the grip worked.
+
+   "How accurate is the placement?"
+      Every MoveJump lands on its target and stops there — there
+      is no blending at the work points. Repeatability is a
+      datasheet number — quote the datasheet, not the demo.
+   --------------------------------------------------------------- */

@@ -1,0 +1,259 @@
+/* ==============================================================
+   04 — Work zone and collision prevention
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   SetWorkZoneLimits, SetToolSphere, SetCollisionCfg
+   NEEDS     Read this one before running anything. Most of these
+             commands require the robot to be DEACTIVATED.
+   WATCH     The robot refusing a move it could physically make
+   TIME      setup, then ~20 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   READ THIS FIRST
+
+   This file is mostly documentation. The important commands here
+   CANNOT go in a motion program, because they can only be
+   executed while the robot is deactivated:
+
+       SetWorkZoneLimits(...)     deactivated only
+       SetWorkZoneCfg(...)        deactivated only
+       SetToolSphere(...)         deactivated only
+       SetCollisionCfg(...)       deactivated only
+
+   That is deliberate. These are safety boundaries, not process
+   parameters — a running program must not be able to widen its
+   own cage. Set them once, from the MecaPortal, with the robot
+   deactivated. They are persistent and survive a power cycle.
+
+   The runnable part of this file is at the bottom.
+
+   ------------------------------------------------------------
+   1. THE WORK ZONE
+
+       SetWorkZoneLimits(xmin, ymin, zmin, xmax, ymax, zmax)
+
+   A cuboid, in millimetres, defined in the BRF — the robot's own
+   base frame, NOT the WRF. This catches people out: the work
+   zone is a property of the cell, so it deliberately does not
+   move when you redefine the world frame.
+
+   Inside the box, the robot works. Try to leave it, and the
+   robot stops the move before it happens.
+
+   The factory default is plus or minus 10,000 mm in every
+   direction — effectively off.
+
+       SetWorkZoneCfg(l, m)
+
+     l — what happens on a breach
+         0  silent, logged internally only
+         1  warning [2183]
+         4  warning [2183] and a motion error [3049]   (default)
+
+     m — what gets checked
+         1  the end of the shaft only                  (default)
+         2  the tool as well (the tool sphere, below)
+         3  the tool AND every robot link
+
+   On a SCARA, the zone you will reach for first is a FLOOR. The
+   arm itself sweeps a flat disc well above the bench; the part
+   that goes down into the work is the shaft and whatever hangs
+   off it. A zmin just above the fixture is the cheapest
+   protection there is against a typo in a z coordinate.
+
+   Mode 3 is the one to talk about with an integrator. It checks
+   the ELBOW and the outer link, not just the tool — and on a
+   SCARA those sweep wide, out to the side of the line from base
+   to tool. Lefty and righty put the elbow on OPPOSITE sides, so
+   one posture can keep the whole arm inside a zone that the
+   other posture breaks, for the same tool position. Anyone who
+   has watched a robot put its elbow through a light curtain
+   understands immediately why this matters.
+
+   ------------------------------------------------------------
+   2. THE TOOL SPHERE
+
+       SetToolSphere(x, y, z, r)
+
+   The robot knows its own geometry. It does not know about your
+   tool, so you describe it as a single sphere: a centre in the
+   FRF — the end of the shaft, z up — and a radius, in mm.
+
+   Crude on purpose. A sphere is cheap to check thousands of
+   times a second, and for a compact tool it is a reasonable
+   envelope. Once defined, the sphere is included in work zone
+   checks (modes 2 and 3) and in self-collision checks.
+
+   Two things to know on this robot. The tool hangs below the
+   shaft, so the sphere's centre has a NEGATIVE z — the same sign
+   rule as the TRF. And the manual is specific about one thing
+   that is NOT checked: the tool sphere against the spline shaft
+   itself. Size the sphere to the real tool.
+
+   Default is all zeros, which disables it.
+
+   ------------------------------------------------------------
+   3. SELF-COLLISION
+
+       SetCollisionCfg(l)
+
+     l   0  silent, logged internally
+         1  warning [2182] on each new imminent collision
+         4  warning [2182] and a motion error [3041]   (default)
+
+   The robot continuously checks whether it is about to run into
+   itself, including the tool sphere if you defined one. On a
+   SCARA that mostly means one thing: the elbow folding the outer
+   link, and the tool, back towards the base column. It is on by
+   default at the strictest setting, which is the right default —
+   leave it there.
+
+   Note the word IMMINENT. These are all PREVENTION features, not
+   detection: the robot refuses the motion before the collision,
+   rather than noticing afterwards. That distinction is worth
+   making explicitly, because "collision detection" on many
+   robots means "we stop shortly after the crash".
+
+   ------------------------------------------------------------
+   THE SALES POINT
+
+   An MCS500 usually sits on a bench, inside a machine, next to
+   expensive fixtures, often within reach of a person. The work
+   zone is what lets an integrator promise that the robot cannot
+   reach the loading window while an operator's hand is in it —
+   enforced by the controller, checked before every move,
+   persistent across reboots, and not modifiable by the running
+   program.
+
+   Be careful with the words, though. This is a motion boundary,
+   not a certified safety function. It prevents mistakes and
+   protects equipment. For personnel safety, refer to the safety
+   chapter of the user manual and to the robot's actual safety
+   signals — the E-Stop, P-Stop 1 and P-Stop 2 inputs on its
+   power supply. Do not let a work zone be sold as a safety
+   rating it does not have.
+
+   ------------------------------------------------------------
+   SETUP: RUN THESE WITH THE ROBOT DEACTIVATED
+
+   Copy these into the code editor, deactivate the robot, run
+   them, then reactivate before continuing.
+
+       SetToolSphere(0, 0, -15, 15)
+       SetCollisionCfg(4)
+       SetWorkZoneCfg(4, 2)
+       SetWorkZoneLimits(-300, -300, 40, 300, 300, 400)
+
+   That declares a 15 mm tool sphere centred 15 mm below the end
+   of the shaft — an envelope for the house tool of
+   intermediate/02, 30 mm long — full error reporting on
+   collisions, work zone checking of the tool sphere (mode 2),
+   and a floor at z = 40 mm in the base frame. The other
+   five faces are out of the arm's reach, so in practice this
+   zone is "nothing goes below 40 mm".
+
+   To undo it all afterwards, deactivate and run:
+
+       SetWorkZoneLimits(0, 0, 0, 0, 0, 0)
+       SetWorkZoneCfg(4, 1)
+       SetToolSphere(0, 0, 0, 0)
+   --------------------------------------------------------------- */
+
+
+/* ============ RUNNABLE PART ================================= */
+/* Requires the SETUP block above to have been applied. With it
+   applied, nothing — shaft end or tool sphere — may go below
+   z = 40 mm. With no tool fitted the sphere is imaginary, which
+   is the point: the robot protects the tool you DECLARED. */
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(20)
+SetCartLinVel(80)
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+// Well inside the zone: the bottom of the tool sphere is 70 mm
+// up. Runs normally.
+MovePose(170, 0, 100, 0)
+Delay(1)
+
+// Still inside, near the floor: the sphere bottom is at 45 mm.
+// Runs normally.
+MovePose(170, 0, 75, 0)
+Delay(1)
+
+// The end of the shaft would stop at 60 mm, inside the zone —
+// but the tool sphere would reach down to 30 mm, through the
+// floor. The move starts, and the robot stops it at the
+// boundary with a work zone error [3049].
+MovePose(170, 0, 60, 0)
+Delay(1)
+
+// If you reset and resume, execution carries on from here.
+ResetError()
+ResumeMotion()
+
+/* Out of the work zone. The end of the shaft itself would be at
+   20 mm, below the floor. The robot REFUSES this move and
+   reports a work zone error [3049]. It does not move part of the
+   way and stop — it does not start.
+
+   This is the line to show a customer. The robot is entirely
+   capable of reaching that position, and declines to.
+
+   After it errors, reset the error and resume to continue: press
+   the run button (now red), then the resume button. */
+MovePose(170, 0, 20, 0)
+
+// If you reset and resume, execution carries on from here.
+Delay(1)
+MovePose(170, 0, 100, 0)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Run to the refused move and let it error. Then say: the
+      robot can reach there, and it will not. Show the error code
+      in the log panel.
+
+   2. Set SetWorkZoneCfg(4, 1) — shaft end only — and run the
+      60 mm move again. It is allowed: the shaft stays above the
+      floor and nobody is checking the tool. Switch back to mode 2
+      and it is not. This makes the modes concrete in about a
+      minute.
+
+   3. For the elbow argument, put a wall in the zone instead of a
+      floor — say ymin = -100, so the robot must stay out of the
+      area to its right — and try mode 3. Reach a point just
+      inside the wall in each posture, with SetConf(1) and
+      SetConf(-1). Whether the elbow stays inside depends on the
+      posture, and the robot will tell you which one breaks it.
+
+   NEXT   05_payload_and_torque_limits.mxprog
+   --------------------------------------------------------------- */

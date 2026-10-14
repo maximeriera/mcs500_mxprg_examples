@@ -1,0 +1,320 @@
+/* ==============================================================
+   07 — The singularity, and why lines cannot cross it
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   What a singularity is, the SCARA's one singularity,
+             and the rules for moving at, near and through it
+   NEEDS     Robot activated, NO TOOL, generous clearance
+   WATCH     The elbow, not the tool tip. The whole phenomenon
+             is visible at the elbow and nearly invisible at the
+             tip
+   TIME      ~60 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   /!\ READ THIS BEFORE RUNNING
+
+   Near a singularity, a slow-looking tool tip can need a FAST
+   joint. That is the defining symptom, and it is the hazard: the
+   tip creeps while the elbow whips.
+
+   This file therefore caps joint speed with SetJointVelLimit
+   rather than trusting SetCartLinVel. A Cartesian velocity limit
+   does NOT protect you here — it limits the tip, and the tip is
+   the thing that is moving slowly.
+
+   Run it with the robot clear of everything, no tool fitted, and
+   watch it the first time before you change any numbers.
+   --------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------
+   WHAT A SINGULARITY IS
+
+   Not a maths problem. A physical blockage.
+
+   Put the robot at its zero position — arm fully stretched — and
+   try to move the end of the shaft straight OUT, further from
+   the base. You cannot. Not "the controller refuses"; the arm
+   has no more length to give.
+
+   Now try to move it straight back IN, towards the base. That is
+   possible, but not right away: from dead straight, the elbow's
+   first few degrees of bend move the tip sideways, not inwards.
+   To get any inward speed at all, the elbow has to bend fast.
+
+   That is a singularity: a posture where the end of the arm
+   loses the ability to move in some direction even though no
+   joint is at its limit. It is a kind of workspace boundary.
+
+   Mathematically, it is where the two joint-set solutions for a
+   pose — lefty and righty — collapse into one. Which is the same
+   thing said in a less useful way.
+
+   ONE TYPE, NOT THREE
+
+   A six-axis arm like the Meca500 has three kinds: wrist, elbow
+   and shoulder. The MCS500 has ONE: the ELBOW singularity,
+
+       θ2 = 0     the arm fully stretched
+
+   whatever the other three joints are doing. Joints 3 and 4 —
+   the shaft — can never be singular: they move straight up and
+   down, and turn, and nothing they do depends on the arm.
+
+   In space, it is a circle: wherever the axis of the shaft is
+   225 mm from the axis of joint 1. The outer edge of the
+   workspace drawing in the user manual, labelled as exactly
+   that. Note that it is the SHAFT that matters, not the tool
+   tip: with an off-axis tool, the tip can be anywhere when the
+   arm is straight.
+
+   Two facts make it impossible to ignore:
+
+   1. THE ZERO POSITION IS ON IT. Every example in this repo
+      starts and ends there. You have been visiting the
+      singularity all along. (So does the MecaPortal's "Zero all
+      joints" button — the user manual says so.)
+
+   2. IT IS THE BORDER BETWEEN LEFTY AND RIGHTY. Joint 2 is
+      positive in one, negative in the other, and zero on the
+      line between. Every posture swap passes through it.
+   --------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------
+   THE RULES
+
+   This is the part worth memorising, because the behaviour
+   differs per command.
+
+     MoveJoints   Always fine. You name joint positions, so no
+                  inverse kinematics is solved and there is
+                  nothing to be singular. Joint moves sail
+                  straight through.
+
+     MovePose     Fine. The manual is explicit: the robot can
+                  transition through, or begin or end at, singular
+                  postures without any issues. A MovePose that
+                  swaps posture goes through it on the way.
+
+     MoveLin*     Can START at the singularity, and can END at
+                  it — the manual says the SCARA allows Cartesian
+                  moves from or to a singular posture, which is
+                  what makes jogging from the zero position work.
+                  But it can NEVER CROSS it. Crossing means
+                  swapping lefty for righty, and the manual is
+                  blunt: it is physically impossible to follow a
+                  linear path while changing configuration.
+
+   That last rule is the big difference from the Meca500, whose
+   straight lines can pass through two of its three
+   singularities. On the SCARA, a straight line belongs to one
+   posture from start to finish.
+
+   AND THE WARNING THAT MATTERS MOST
+
+   Close to the singularity, moving the tip in or out needs an
+   elbow speed that grows without limit as the arm straightens.
+   The robot keeps every joint within its limits by slowing the
+   tip. So "nearly stretched" means "slow" — and the closer, the
+   slower.
+
+   The design rule that falls out of it: keep working points well
+   inside the circle. A comfortable margin is the elbow bent by
+   at least 30 degrees, which puts the shaft no more than about
+   215 mm from the base axis. Use this file to understand the
+   phenomenon so you can design paths that stay away from it.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+/* --- Safety settings for this file ---------------------------- */
+
+// The important one. Caps how fast any joint may turn, for EVERY
+// Move* command. This is what protects you when the elbow has to
+// hurry.
+SetJointVelLimit(10)
+
+SetJointVel(15)
+SetCartLinVel(30)
+SetBlending(0)          // see each arrival distinctly
+SetAutoConf(1)
+
+
+/* ============================================================
+   DEMO 1 — starting AT the singularity
+   ============================================================
+   Go to the zero position, which is singular, and move straight
+   back towards the base. */
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+/* A straight line, 30 mm, straight in. Starting a linear move at
+   the singularity is explicitly supported, so this is accepted
+   rather than refused.
+
+   Watch the START. The tip barely moves for a moment while the
+   elbow breaks out of straight, then it picks up to the speed
+   you asked for. That hesitation is the blocked direction from
+   the top of this file, made visible.
+
+   Which way does the elbow break — lefty or righty? From dead
+   straight, both are equally good, and with automatic selection
+   on it is the controller's choice. Worth knowing before you
+   rely on it. */
+MoveLin(195, 0, 109, 0)
+Delay(1)
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+
+/* ============================================================
+   DEMO 2 — reaching for the edge
+   ============================================================
+   The same thing in reverse, and the one you meet in real
+   programs: a straight line out towards the singularity,
+   stopping just short of it. */
+
+MovePose(170, 0, 100, 0)
+Delay(1)
+
+/* 54.5 mm straight out, ending half a millimetre inside the
+   circle. Most of the way, the tip runs at the 30 mm/s asked
+   for. Over the last several millimetres it visibly slows: the elbow
+   is already at its speed cap, and every remaining millimetre
+   needs more elbow than the last. Watch joint 2 — it is the one
+   doing all the work. */
+MoveLin(224.5, 0, 100, 0)
+Delay(1)
+
+MoveLin(170, 0, 100, 0)
+Delay(1)
+
+
+/* ============================================================
+   DEMO 3 — the only way across is a joint move
+   ============================================================
+   Swap posture, and watch joint 2 on the way: it passes through
+   zero. The arm straightens for an instant — on the singularity
+   — and comes out the other side as its mirror image.
+
+   This works because MovePose is a joint-space move. */
+
+SetConf(1)              // righty
+MovePose(170, 0, 100, 0)
+Delay(1.5)
+
+SetConf(-1)             // lefty — through the singularity
+MovePose(170, 0, 100, 0)
+Delay(1.5)
+
+
+/* ============================================================
+   DEMO 4 — the same swap, refused as a line
+   ============================================================
+   The robot is lefty now. Demand righty and ask for a short
+   straight line.
+
+   The robot refuses. The line would have to start lefty and end
+   righty, and no straight line can do that: the posture can
+   only change by passing through the singularity, which a line
+   cannot cross. It declines the whole move rather than starting
+   one it cannot finish. */
+
+SetConf(1)
+
+// Expect a refusal and an error here — [1033], the start
+// position is not in the requested configuration. Nothing should
+// move.
+MoveLin(170, 40, 100, 0)
+
+/* Reset the error before continuing: press the run button (now
+   red), then resume. Or send ResetError() and ResumeMotion()
+   from the editor. */
+Delay(1)
+
+/* Now hand the choice back and ask for exactly the same line.
+   Accepted — and it stays lefty all the way, because a straight
+   line cannot do anything else. The capability to change
+   posture was never on offer; only the demand for it changed. */
+SetAutoConf(1)
+MoveLin(170, 40, 100, 0)
+Delay(1)
+
+
+/* --- Put everything back ------------------------------------- */
+
+SetAutoConf(1)
+SetJointVelLimit(100)
+SetBlending(100)
+
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   A NOTE ON THE COORDINATES IN THIS FILE
+
+   The singular condition here comes straight from the manual and
+   is exact: θ2 = 0, the shaft 225 mm from the base axis, the
+   zero position on it.
+
+   The Cartesian start and end poses of the demos are
+   constructed — lines towards, away from and alongside the
+   singular circle, built to match the behaviour the manual
+   describes rather than copied from it. They should behave as
+   annotated, but exactly how slow the last millimetres of demo 2
+   are depends on the speed caps, and which way the elbow breaks
+   in demo 1 is the controller's choice. If a demo behaves
+   differently from its comment, trust the robot and tell us:
+   open an issue.
+
+   THINGS TO TRY
+
+   1. Demo 3 then demo 4, back to back. The joint-space swap
+      works, the straight-line swap is refused, and the only
+      difference is the kind of move. This is the clearest way to
+      show what "a line cannot cross the singularity" means.
+
+   2. In demo 2, change 224.5 to 220, then to 224.9. The first is
+      unremarkable; the second crawls in. The penalty is not
+      linear and it is not small.
+
+   3. Set SetJointVelLimit(100) at the top and re-run demo 2 — at
+      your own risk, with the robot clear. The elbow speeds that a
+      near-singular line demands are the whole safety argument
+      for this file, and on a SCARA they are quick.
+
+   4. Put the robot at all-zeros and run SetAutoConf(0), then
+      GetConf(). The controller has to freeze "the current
+      posture" and cannot, because the arm is singular — so it
+      picks righty, 1, as the manual says it will. A small thing,
+      but it shows that "the current configuration" is not always
+      a well-defined idea.
+
+   NEXT   Nothing — this is the last file. Back to the README,
+          and to DISCLAIMER.md for the list of places this repo
+          simplifies, including this topic.
+   --------------------------------------------------------------- */

@@ -1,0 +1,317 @@
+/* ==============================================================
+   cold_start — guarantee the robot behaves the way you expect
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   PURPOSE   Wipe every leftover setting, so a demo behaves the
+             same on a robot someone else has been fiddling with
+   SAVE AS   00_common/00_cold_start
+   CALL      StartProgram("00_common/00_cold_start")
+   NEEDS     Robot powered on, motors powered (RESET pressed),
+             connected in CONTROL mode
+   MOVES     Nothing. See the note on homing below.
+   TIME      ~10 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE PROBLEM
+
+   The robot on the bench was last used by someone else.
+   Did they leave a tool frame defined? A restricted joint limit?
+   A work zone? The time-scaling slider at 20%? Simulation mode
+   on?
+
+   Any one of those makes your demo behave differently from the
+   way it behaved when you rehearsed it, and you will not know
+   why without checking.
+
+   THE THREE KINDS OF SETTING
+
+   This is the distinction that makes the whole thing tractable,
+   and it is worth knowing cold. The MCS500 has three kinds, not
+   two.
+
+   1. NON-PERSISTENT settings live only for as long as the robot
+      is activated. TRF, WRF, speeds, blending, payload, posture
+      and turn selection, torque limits, move mode, MoveJump
+      heights. The manual puts it plainly: by deactivating the
+      robot, you lose all settings that are not persistent.
+
+      So DEACTIVATE + REACTIVATE resets all of them, in one
+      stroke, back to firmware defaults. That is Part 3 below.
+
+   2. REBOOT-ONLY settings survive a deactivation and are only
+      reset when the robot is power cycled. Time scaling and
+      recovery mode are the two that matter for motion.
+      Deactivating does nothing to them, so a robot
+      that has been on all day can still be running at the speed
+      someone set on the slider this morning. That is Part 2.
+
+   3. PERSISTENT settings are written to the robot's SD card and
+      survive deactivation, reboots, and power cycles. Only 14
+      commands set these — the manual calls them configuration
+      commands — and deactivating does NOTHING to them.
+
+      These are the ones that will surprise you, because there is
+      no natural moment at which they get cleared. They have to
+      be dealt with deliberately. That is Parts 1 and 4.
+
+   THE HAPPY ACCIDENT
+
+   Every persistent setting that affects MOTION can only be
+   changed while the robot is DEACTIVATED. Which means the
+   deactivate step you need anyway is exactly the window in which
+   you can fix them. That is why this program is shaped the way
+   it is.
+
+   (The rest of the fourteen are network and identity settings —
+   the robot name, its IP options, and which fieldbus it speaks.
+   None affect motion, and this program leaves all of them
+   alone.)
+
+   DOES THIS MOVE THE ROBOT?
+
+   No. The MCS500 has absolute encoders and never needs homing,
+   so deactivating and reactivating it does not move the arm.
+   --------------------------------------------------------------- */
+
+
+/* ============================================================
+   PART 1 — AUDIT: see what you are dealing with
+   ============================================================
+
+   Run this part FIRST, on its own, and read the log panel.
+   Nothing here changes anything — these are all data requests.
+
+   This is the safe answer to "is this robot set up the way I
+   expect?", and on a customer's own robot it is often the only
+   part of this file you should run. Look before you reset. */
+
+GetFwVersion()              // are the examples written for this firmware?
+GetProductType()            // MUST answer [2084][MCS500] — see below
+GetRobotSerial()
+
+GetJointLimitsCfg()         // [2094][1] means USER JOINT LIMITS ARE ACTIVE
+GetWorkZoneLimits()         // a cuboid tighter than +/-10000 is configured
+GetWorkZoneCfg()            // severity and what gets checked
+GetToolSphere()             // non-zero radius means a tool is declared
+GetCollisionCfg()
+GetPStop2Cfg()              // what the P-Stop 2 safety input does
+GetCalibrationCfg()
+GetSimModeCfg()             // which sim mode ActivateSim() would pick
+
+GetTimeScaling()            // anything under 100 slows EVERYTHING
+GetRecoveryMode()           // on = reduced speed, relaxed limits
+
+GetStatusRobot()            // activated? in error? in sim mode?
+
+/* Reading the answers:
+
+     GetJointLimitsCfg  -> 0  factory limits                  GOOD
+                           1  someone restricted a joint
+     GetWorkZoneLimits  -> +/-10000 on every axis             GOOD
+                           anything tighter is a configured cage
+     GetWorkZoneCfg     -> 4, 1  factory default              GOOD
+     GetToolSphere      -> 0, 0, 0, 0  no tool declared       GOOD
+     GetCollisionCfg    -> 4  factory default                 GOOD
+     GetPStop2Cfg       -> 3  factory default (clear motion)  GOOD
+     GetCalibrationCfg  -> 1  factory default                 GOOD
+     GetSimModeCfg      -> 1  normal (real-time) simulation   GOOD
+     GetTimeScaling     -> 100                                GOOD
+     GetRecoveryMode    -> 0  off                             GOOD
+
+   If all of those read as GOOD, you do not need Part 4 at all —
+   Parts 2 and 3 alone will give you a clean robot.
+
+   /!\ CHECK GetProductType FIRST. This repo is written for the
+     MCS500 and nothing else. Every example assumes the four-axis
+     SCARA geometry — four-value joint sets with a LINEAR third
+     joint in millimetres, four-value poses, the MCS500's joint
+     limits, and one posture parameter. On any other Mecademic
+     model those assumptions are wrong, and the programs will
+     either be refused or move somewhere you did not intend. If
+     this is not an MCS500, stop here. */
+
+
+/* ============================================================
+   PART 2 — THE SETTINGS ONLY A REBOOT CLEARS
+   ============================================================
+
+   Both of these run in any robot state, and both are safe.
+
+   Time scaling is the slider at the bottom of the MecaPortal's
+   program panel. Below 100 it slows every motion AND every
+   Delay by the same factor — the path is identical, everything
+   just takes longer. Left at 30% by someone else, it makes your
+   demo look like a robot three times slower than it is. */
+SetTimeScaling(100)
+
+/* Recovery mode exists to get a robot out of trouble — outside
+   a joint limit, outside the work zone, in self-collision. It
+   does that by relaxing those checks and capping speed hard.
+   Nobody should be running a demo in it.
+
+   If this robot actually NEEDS recovery mode — a joint parked
+   outside its user limits — then the ActivateRobot in Part 5
+   will fail once this line has run. That is the right outcome:
+   you have just found the problem. Jog it back in recovery mode
+   from the MecaPortal, then run this file again. */
+SetRecoveryMode(0)
+
+
+/* ============================================================
+   PART 3 — THE RESET THAT IS ALWAYS SAFE
+   ============================================================
+
+   Deactivate, then reactivate. Everything non-persistent goes
+   back to its firmware default: TRF and WRF back to the flange
+   and the base, speeds back to 25% and 150 mm/s, blending back
+   to 100%, payload back to 0, torque limits back to 100%,
+   posture and turn selection back to automatic, move mode back
+   to velocity-based, MoveJump heights back to 10 mm.
+
+   No editing required, nothing cell-specific, nothing
+   destructive. If you only run one part of this file, run this
+   one. */
+
+DeactivateRobot()
+
+/* --- the robot is now deactivated -----------------------------
+   This is the ONLY window in which Part 4 can run. If you want
+   it, uncomment it now — it has to sit here, between the
+   deactivate and the activate. */
+
+
+/* ============================================================
+   PART 4 — PERSISTENT SETTINGS  (opt-in; read the warning)
+   ============================================================
+
+   /!\ WARNING — DO NOT UNCOMMENT THIS ON A CUSTOMER'S PRODUCTION
+     ROBOT WITHOUT ASKING.
+
+     These lines return the persistent settings to their FACTORY
+     defaults. On a bare demo robot that is exactly what you
+     want. On a robot in a real cell, several of them are the
+     safety envelope somebody configured deliberately — a work
+     zone that stops the arm reaching the loading window, a joint
+     limit protecting a tool cable, a P-Stop 2 behaviour chosen
+     in a risk assessment. Resetting those silently removes
+     protection that the cell was built around.
+
+     Rule of thumb: uncomment on a demo or loaner robot. On a
+     customer's own robot, run Part 1, show them what it says,
+     and let them decide.
+
+   These are commented out deliberately. Uncomment as a block. */
+
+// SetJointLimitsCfg(0)                    // factory joint limits
+// SetWorkZoneLimits(0, 0, 0, 0, 0, 0)     // the zeros form resets to factory
+// SetWorkZoneCfg(4, 1)                    // factory: error on breach, check FCP
+// SetToolSphere(0, 0, 0, 0)               // no tool declared
+// SetCollisionCfg(4)                      // factory: warn and raise a motion error
+// SetPStop2Cfg(3)                         // factory: P-Stop 2 clears the motion queue
+// SetCalibrationCfg(1)                    // factory: calibration ENABLED
+// SetSimModeCfg(1)                        // factory: normal real-time sim
+
+/* Notes on four of those:
+
+   SetJointLimitsCfg(0) DISABLES user-defined limits and restores
+   the factory ones. It does not erase the user limits — they
+   stay in memory and can be re-enabled later with
+   SetJointLimitsCfg(1). Nothing is lost.
+
+   SetCalibrationCfg(1) matters more than it looks. If the robot
+   went through Mecademic's optional calibration service, turning
+   calibration off sends Cartesian moves to slightly different
+   poses — MoveJoints is unaffected, MovePose and MoveLin are
+   not. A robot with calibration switched off is a robot whose
+   accuracy quietly does not match what was paid for.
+
+   SetWorkZoneLimits(0,0,0,0,0,0) is the documented reset form.
+   All-zeros means "factory default", which is +/-10,000 mm on
+   every axis — effectively no work zone at all.
+
+   SetPStop2Cfg decides what the robot does when the P-Stop 2
+   safety input opens: 3 pauses and CLEARS the motion queue
+   (factory), 2 pauses and keeps it, so a ResumeMotion carries on
+   where it stopped. That is a safety-design decision. If Part 1
+   read 2, somebody chose it — find out why before changing it.
+
+   NOT TOUCHED HERE, ON PURPOSE:
+
+     SetRobotName, SetNetworkOptions, EnableEtherNetIp,
+     EnableProfinet, SwitchToEtherCat
+
+   Those are persistent too, but they are the robot's identity
+   and how it is wired into the customer's network. Resetting
+   them from a demo script would be rude at best and would take
+   the robot off the network at worst.
+   --------------------------------------------------------------- */
+
+
+/* ============================================================
+   PART 5 — BACK TO READY FOR MOTION
+   ============================================================
+
+   The same three commands as basic/01, and for the same reasons.
+   All idempotent, so none of them fails if there is nothing to
+   do.
+
+   There is no Home() here, and that is not an omission. The
+   MCS500 knows where its joints are from the moment it powers
+   up. (If you came from a Meca500 and add one anyway, the robot
+   accepts it and does nothing — the manual says Home has effect
+   only on the Meca500.) */
+
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+/* ============================================================
+   PART 6 — THE HOUSE SETTINGS
+   ============================================================
+
+   Part 3 left every non-persistent setting at its FIRMWARE
+   default. That is a known state, but it is not necessarily
+   OUR known state — this repo runs slower than the firmware
+   default, and a real cell has a tool frame.
+
+   So finish by applying the house settings. Save
+   00_common/01_init.mxprog as "00_common/01_init" first, or
+   comment this out. */
+
+StartProgram("00_common/01_init")
+
+LogTrace("00_common/00_cold_start complete")
+SetCheckpoint(99)
+
+
+/* ---------------------------------------------------------------
+   HOW TO USE THIS IN PRACTICE
+
+   Before a demo, on a robot you do not know:
+     1. Run Part 1 alone. Select those lines, press Ctrl+Enter,
+        read the log.
+     2. If anything reads as non-factory, decide whether it is
+        deliberate. Ask, if it is not your robot.
+     3. Run the whole file.
+
+   On your own demo robot: just run the whole file, with Part 4
+   uncommented. Ten seconds, and the robot is in a state you can
+   predict.
+
+   /!\ ONE THING TO VERIFY ON HARDWARE
+
+   Deactivating from inside a running program is legal — the
+   commands allow it, and every usage restriction here is
+   satisfied in this order. But a deactivate clears the motion
+   queue, and this repo was written without a robot to hand, so
+   the MecaPortal's exact behaviour when its program runner meets
+   a DeactivateRobot mid-file has not been confirmed.
+
+   If the run stops at Part 3 rather than continuing, split this
+   file in three and run them in order, or do the deactivate and
+   reactivate with the MecaPortal toolbar buttons and run only
+   Parts 2, 4 and 6. The command sequence is correct either way.
+   Please delete this note once someone has run it on a robot.
+   --------------------------------------------------------------- */

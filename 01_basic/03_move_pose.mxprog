@@ -1,0 +1,196 @@
+/* ==============================================================
+   03 — MovePose: naming a position in space
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   Cartesian targets, and how they differ from joint ones
+   NEEDS     Robot activated, no tool mounted
+   WATCH     You name WHERE it ends up, not HOW it gets there
+   TIME      ~20 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   FROM JOINTS TO SPACE
+
+   MoveJoints asked for four joint positions. That is fine for
+   the robot and useless for everyone else — nobody knows a
+   part's location as a pair of arm angles.
+
+   MovePose asks for a POSE instead: a position in ordinary
+   three-dimensional space, and which way the tool is turned.
+
+       MovePose(x, y, z, γ)
+
+     x, y, z    where the tool tip is, in mm
+     γ          how far the tool is turned about the vertical,
+                in degrees
+
+   Read it as: "put the TRF at this pose, expressed in the WRF."
+
+     TRF — Tool Reference Frame. The tool tip. By default it sits
+           on the end of the shaft; you move it to the real tip
+           of the real tool with SetTrf. See 02_intermediate/02.
+     WRF — World Reference Frame. The origin everything is
+           measured from. By default it is the robot's base; you
+           move it to a fixture or a tray with SetWrf. See
+           02_intermediate/01.
+
+   Those two frames are what turn a robot into an application,
+   and they are the reason this command is worth the extra
+   concept. A pose stays correct when you change tools or move
+   the robot on the bench — you redefine a frame, and every pose
+   in every program follows.
+
+   WHERE THE AXES ARE
+
+   The base frame sits on the bottom of the robot's base, on the
+   axis of joint 1. x points straight forward, out of the front
+   of the base. y points to the robot's left. z points up, so
+   z is the height above the bench.
+
+   ONE ANGLE, NOT THREE
+
+   On a six-axis arm, orientation takes three angles, because
+   the tool can point in any direction. On a SCARA it cannot: the
+   shaft is always vertical, so the tool always points straight
+   down. The only orientation left to choose is how far it is
+   TURNED about that vertical. One number, γ.
+
+   Every frame on this robot follows the same rule — z up, one
+   angle about it — and the robot will not accept anything else.
+   That removes a whole class of mistakes before you can make
+   them.
+
+   You still will not usually type these numbers. Jog the robot
+   to the position you want and let the MecaPortal write them for
+   you: right click in the code editor, then "TO CURRENT
+   POSITION", and it inserts the command with the current pose
+   already filled in, using the current TRF and WRF.
+
+   THE IMPORTANT SUBTLETY
+
+   MovePose specifies the DESTINATION in Cartesian space. It does
+   NOT specify the path. Internally the robot solves for the
+   joint positions that produce your pose, then performs a
+   joint-space move to them — exactly like MoveJoints.
+
+   So the tool tip travels a smooth, repeatable curve, not a
+   straight line. If you need the straight line, that is MoveLin,
+   and it is the next file.
+
+     MoveJoints  target as joints      path is a curve
+     MovePose    target as a pose      path is a curve
+     MoveLin     target as a pose      path is a straight line
+
+   MovePose is the one you will use most: it takes coordinates a
+   human can reason about, while keeping the speed and freedom of
+   a joint-space move.
+
+   ONE MORE THING
+
+   A single pose can usually be reached in two arm shapes — the
+   elbow bent one way ("righty") or the other ("lefty") — and
+   with the shaft on any of several turns. The robot picks
+   automatically. When you need to force the choice, that is
+   SetConf, in 02_intermediate/04.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(15)
+
+// --- Start from the zero position -----------------------------
+MoveJoints(0, 0, 0, 0)
+
+Delay(1)
+
+/* This pose is the zero position expressed in Cartesian terms —
+   the same robot posture as the line above, described the other
+   way: 225 mm straight out, 109 mm up, tool not turned. Running
+   it should produce no visible movement, which is the point: two
+   vocabularies, one position. */
+MovePose(225, 0, 109, 0)
+
+Delay(1)
+
+
+// --- Now move in space ----------------------------------------
+// Only z changed: 50 mm lower. And only ONE joint moves to do
+// it — joint 3, the shaft. This is the defining property of a
+// SCARA: up and down is a joint of its own, completely separate
+// from where the arm is in the horizontal plane. On a six-axis
+// arm, "lower the tool by 50 mm" takes several joints working
+// together.
+MovePose(225, 0, 59, 0)
+
+Delay(1)
+
+// Now across, in the horizontal plane. Joints 1 and 2 swing the
+// arm — and watch the shaft: joint 4 turns too, even though γ
+// did not change. It is holding the tool's direction fixed in
+// the world while the arm around it rotates. Ask for γ = 0 and
+// you get γ = 0, whatever the arm had to do.
+MovePose(170, 60, 59, 0)
+
+Delay(1)
+
+// Watch the tool tip on this one. We ask for a move straight
+// across and up, and the tip visibly bows out on the way. That
+// curve is the joint-space path. Nothing is wrong — we simply
+// never asked for a straight line.
+MovePose(170, -60, 109, 0)
+
+Delay(1)
+
+// Only γ changed: the tool turns 90 degrees in place. One joint
+// again — joint 4 — and the rest of the arm does not move.
+MovePose(170, -60, 109, 90)
+
+Delay(1)
+
+
+// --- Back to zero ---------------------------------------------
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Jog the robot anywhere by hand, then right click in the
+      editor and insert MovePose "TO CURRENT POSITION". Teaching
+      a point takes about four seconds. This lands well with
+      anyone who has taught points on a pendant.
+
+   2. Run the "across and up" MovePose and trace the curve with
+      your finger. Then open 04_move_lin.mxprog and run the
+      equivalent line. The difference between the two is the
+      whole lesson.
+
+   3. Try MovePose(240, 0, 100, 0). The robot refuses before
+      moving: the arm is 225 mm long, and that point is 240 mm
+      out. "Out of reach" is the first error everyone meets with
+      Cartesian targets.
+
+   NEXT   04_move_lin.mxprog — when the path itself matters.
+   --------------------------------------------------------------- */

@@ -1,0 +1,212 @@
+/* ==============================================================
+   01 — Robot variables (beta)
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   CreateVariable, SetVariable, vars. and *vars.
+   NEEDS     Robot activated, firmware 11.x
+   WATCH     A motion command with no coordinates in it
+   TIME      ~25 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE GAP THIS FILLS
+
+   Everything so far has had its numbers typed into it. That is
+   fine for a demo and wrong for a product: a cell that runs three
+   part variants should not need three programs that differ only
+   in coordinates.
+
+   The robot can hold named, persistent VARIABLES, and motion
+   commands can take their arguments from them.
+
+       CreateVariable(name, value, cyclicId, override, volatile)
+       SetVariable(name, value)
+       GetVariable(name)
+       DeleteVariable(name)
+       ListVariables()
+
+   BETA
+
+   Say so. This is documented as a beta feature, and an
+   integrator planning a machine build deserves to know that
+   before they design around it. It works, it is in the manual,
+   and the API may still move.
+
+   VALUES
+
+   A variable holds any basic JSON type — boolean, number,
+   string, or array. Not an object. JSON rules apply, so booleans
+   are lowercase true and false.
+
+   Names are case sensitive and can carry dotted group prefixes,
+   which is how you keep a real cell tidy:
+   "pick.trayA.approach" rather than fourteen loose names.
+
+   The type is fixed when the variable is created. SetVariable
+   will refuse a value of a different type or a different array
+   length, and the robot performs no conversion. To change a
+   type, create it again with the override argument.
+
+   USING THEM: TWO PREFIXES
+
+     vars.name    a single value
+                  SetCartLinVel(vars.part.processVel)
+
+     *vars.name   an array, UNROLLED into separate arguments
+                  MovePose(*vars.pick.pose)
+
+   The asterisk is the part people miss. A pose is four numbers;
+   storing it as one array of four and unrolling it with * is far
+   better than four separate variables. And because MoveJump
+   takes the same four numbers, the same variable feeds it too.
+
+   PERSISTENCE
+
+   Variables are stored on the robot and survive a reboot, unless
+   created with volatile = 1, in which case a reboot discards
+   them. The suggested pattern, straight from the manual, is one
+   program whose only job is to create the variables, run once at
+   commissioning — and then production programs that only refer
+   to them.
+
+   Note the warning that goes with this: setting a variable is a
+   blocking operation that writes to persistent storage. Use
+   robot variables for values that change per batch or per
+   recipe. Do NOT use them for values that change every cycle —
+   those belong in the host program.
+
+   AND THE HONEST LIMIT
+
+   Variables give you parameters, not logic. There is still no
+   IF and no WHILE. You cannot compute a new pose on the robot,
+   or choose between two of them based on a sensor. The host does
+   that, and then either sets a variable or sends the command.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+/* --- Part 1: create the variables ------------------------------
+   In a real cell this block lives in its own program, run once.
+   It is here so this file works standalone.
+
+   override = 1 so the file can be run repeatedly without
+   failing on names that already exist. */
+
+// Cartesian poses, stored as arrays of four: x, y, z, γ.
+CreateVariable("demo.home",     [180, 0, 100, 0], 0, 1)
+CreateVariable("demo.approach", [170, 0, 80, 0],  0, 1)
+CreateVariable("demo.pick",     [170, 0, 50, 0],  0, 1)
+CreateVariable("demo.place",    [170, 60, 50, 0], 0, 1)
+
+// Single values: the process parameters a customer would tune.
+CreateVariable("demo.travelVel", 200, 0, 1)
+CreateVariable("demo.processVel", 25, 0, 1)
+CreateVariable("demo.dwell", 0.5, 0, 1)
+
+
+/* --- Part 2: a program with no coordinates in it ---------------
+   Read the motion block below. There is not a single number in
+   it. Every position and every speed comes from a variable.
+
+   That is the whole idea: this is now a description of the
+   SEQUENCE, and the numbers are data that lives somewhere else
+   and can be changed without touching it. */
+
+SetJointVel(20)
+MoveJoints(0, 0, 0, 0)
+
+SetCartLinVel(vars.demo.travelVel)
+MovePose(*vars.demo.home)
+
+MovePose(*vars.demo.approach)
+
+SetCartLinVel(vars.demo.processVel)
+MoveLin(*vars.demo.pick)
+Delay(vars.demo.dwell)
+
+SetCartLinVel(vars.demo.travelVel)
+MovePose(*vars.demo.approach)
+MovePose(*vars.demo.place)
+Delay(vars.demo.dwell)
+
+MovePose(*vars.demo.home)
+
+
+/* --- Part 3: changeover ----------------------------------------
+   A different part, a different pick location, a part that has
+   to go into the tray turned a quarter turn, a slower process
+   speed. Three lines of data — and the motion block above is
+   reused unchanged.
+
+   In production these SetVariable calls come from the host, from
+   a recipe file, or from an operator screen. Nobody edits a
+   robot program to change a part. */
+
+SetVariable("demo.pick", [170, -60, 50, 0])
+SetVariable("demo.place", [170, 60, 40, 90])
+SetVariable("demo.processVel", 10)
+
+// The same sequence again, now running the second part.
+MovePose(*vars.demo.approach)
+SetCartLinVel(vars.demo.processVel)
+MoveLin(*vars.demo.pick)
+Delay(vars.demo.dwell)
+SetCartLinVel(vars.demo.travelVel)
+MovePose(*vars.demo.approach)
+MovePose(*vars.demo.place)
+Delay(vars.demo.dwell)
+MovePose(*vars.demo.home)
+
+
+// --- Home -----------------------------------------------------
+SetCartLinVel(150)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Scroll through part 2 and point out that there are no
+      coordinates. Then run part 3 and show the same code running
+      a different part. This is the answer to "how do you handle
+      changeover?".
+
+   2. Run ListVariables() on its own to show what the robot is
+      holding, and GetVariable(demo.pick) to read one back. The
+      host can do both over TCP/IP, which is how an HMI screen
+      gets built.
+
+   3. Reboot the robot and read the variable again. It is still
+      there. Persistence is often the detail that decides whether
+      this is useful to them.
+
+   4. In part 2, replace MoveLin(*vars.demo.pick) with
+      MoveJump(*vars.demo.pick), and the MovePose to the place
+      with MoveJump(*vars.demo.place), after a SetBlending(0).
+      Same data, the SCARA's own move — see 02_intermediate/07.
+
+   NEXT   02_program_calls.mxprog — structure without flow
+          control.
+   --------------------------------------------------------------- */

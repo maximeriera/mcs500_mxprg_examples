@@ -1,0 +1,215 @@
+/* ==============================================================
+   02 — TRF: the Tool Reference Frame
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   SetTrf — telling the robot where the tool tip is
+   NEEDS     Robot activated. Runs safely with no tool.
+   WATCH     A turn about the shaft, then about a tool tip that
+             is off to one side of it
+   TIME      ~30 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE OTHER HALF OF THE FRAME STORY
+
+   The WRF answers "where is the work?". The TRF answers "where
+   is the tool?".
+
+       SetTrf(x, y, z, γ)
+
+   defines the TRF — the Tool Reference Frame — with respect to
+   the FRF, the Flange Reference Frame. On the MCS500 the flange
+   is simply the lower end of the spline shaft: the FRF sits on
+   the very end of it, z up along the shaft axis.
+
+   By default the TRF sits exactly there. That is correct and
+   useless: nothing does work at the end of a bare shaft. The
+   work happens at the lip of the suction cup, the point of the
+   dispensing needle, the centre of the gripper's jaws —
+   somewhere below the shaft, and sometimes off to one side of
+   it.
+
+   Tell the robot where that point is, and two things become
+   true:
+
+   1. Every pose you write refers to the TOOL TIP, not the shaft.
+      You program the point that touches the part.
+
+   2. Turns happen ABOUT THE TIP. This is the one that matters
+      and the one that demonstrates well. Ask the robot to turn
+      the tool 40 degrees and it pivots around the tip of the
+      needle, instead of swinging the needle through an arc as
+      the shaft turns.
+
+   THE TCP
+
+   The origin of the TRF is the TCP — Tool Centre Point. When a
+   customer says "our TCP", this command is what they mean. (Not
+   to be confused with TCP/IP, which is unfortunate but
+   universal.)
+
+   THE SIGN THAT CATCHES EVERYONE
+
+   Every frame on this robot has its z axis pointing UP, and the
+   robot will not accept anything else. Tools hang DOWN from the
+   shaft. So the z of almost every real TRF is NEGATIVE:
+
+       SetTrf(0, 0, -30, 0)    tip 30 mm below the end of the shaft
+
+   If you come from a six-axis robot, where the tool frame's z
+   usually points out of the tool, this is backwards from what
+   your fingers expect. Write it down once and check it every
+   time.
+
+   And γ? It turns the tool frame about the vertical — useful to
+   make the tool's x axis run along a gripper's jaws or a
+   camera's image rows. For a round tool like a suction cup it
+   does nothing you would notice; leave it at 0.
+
+   WHERE THE NUMBERS COME FROM
+
+   Three sources, in increasing order of effort:
+     - the tool's own drawing, if it was designed for this
+     - measurement of the built assembly
+     - a touch-off routine, jogging the tip to a known point at
+       several turns of the shaft
+
+   THE HOUSE TOOL
+
+   Most SCARA tools sit on the shaft axis — a suction cup, a
+   small gripper, a pusher — so the tip is straight below the
+   flange, with no sideways offset. This repo uses one such tool
+   throughout:
+
+       SetTrf(0, 0, -30, 0)
+
+       0, 0   the tip is on the shaft axis
+       -30    and 30 mm below the end of the shaft
+
+   The 30 is a stand-in. Measure from the end of the spline shaft
+   to the working point of YOUR tool, and use that. This line is
+   the house tool for every example from here on.
+
+   WHY IT PAYS OFF LATER
+
+   Change the tool, change one line, and every pose in every
+   program is still correct. Without a TRF, a new tool means
+   reteaching every point. This is the argument that lands with
+   anyone who maintains a cell rather than builds one.
+
+   Like the WRF, the TRF resets to its default when the robot is
+   activated or reactivated. And like SetWrf, SetTrf brings the
+   robot to a complete stop at that point in the queue, even with
+   blending on.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(15)
+SetCartLinVel(60)
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+
+/* --- Before: no tool defined -----------------------------------
+   TRF sits on the end of the shaft, so poses describe the end of
+   the shaft. */
+SetTrf(0, 0, 0, 0)
+
+MovePose(170, 0, 60, 0)
+Delay(1)
+
+// Turn 40 degrees about the TRF's z axis, then back. With no
+// tool defined, that axis is the shaft itself — so only joint 4
+// moves, and the shaft spins on the spot. Anything mounted off
+// to one side of it sweeps through an arc.
+//
+// MoveLin, not MovePose: a MoveLin keeps the TCP on a straight
+// line — here, a line of zero length — so the pivot really does
+// hold still for the whole move, not just at the two ends.
+MoveLin(170, 0, 60, 40)
+Delay(0.5)
+MoveLin(170, 0, 60, -40)
+Delay(0.5)
+MoveLin(170, 0, 60, 0)
+
+Delay(1)
+
+
+/* --- After: an off-axis tool defined ---------------------------
+   Imagine a dispensing needle on a small bracket: its tip 40 mm
+   out to the side of the shaft axis, along the FRF's x, and
+   30 mm below the end of the shaft. Off-axis tools like this —
+   needles, probes, a camera beside a cup — are where the TRF
+   stops being a formality. No physical tool is required to see
+   the effect. */
+SetTrf(40, 0, -30, 0)
+
+// Move the TIP to the same place the end of the shaft was
+// before. The arm visibly draws back 40 mm and the shaft rises
+// 30 mm to put it there, which on its own tells the story: the
+// robot is now positioning the tool, not itself.
+MovePose(170, 0, 60, 0)
+Delay(1)
+
+// The same 40 degrees about the TRF's z axis — which now runs
+// vertically through the needle tip. The tip stays put and the
+// SHAFT orbits around it: joints 1 and 2 swing the arm while
+// joint 4 turns, all three together. This is the moment the
+// concept lands for most people; it is much more convincing
+// seen than described.
+MoveLin(170, 0, 60, 40)
+Delay(0.5)
+MoveLin(170, 0, 60, -40)
+Delay(0.5)
+MoveLin(170, 0, 60, 0)
+
+
+// --- Put the tool back ----------------------------------------
+SetTrf(0, 0, 0, 0)
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Run the two halves back to back with no narration. "Watch
+      what the tip does" is the only line you need.
+
+   2. Change the 40 in SetTrf to 60 — a longer bracket — and run
+      again. Longer tool, same code, still pivots about the tip.
+      Then ask what changing a tool costs them today.
+
+   3. If a real off-axis tool is mounted, measure it, put the
+      real offsets into SetTrf, and touch the tip to a fixed
+      point. Turn in place and show the tip staying on that
+      point through the turn. This is the single most persuasive
+      thing you can do with a SCARA on a table.
+
+   NEXT   03_relative_moves.mxprog — moving relative to the tool
+          and to the world, which is what the frames really buy
+          you.
+   --------------------------------------------------------------- */

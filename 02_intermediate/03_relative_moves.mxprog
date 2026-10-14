@@ -1,0 +1,218 @@
+/* ==============================================================
+   03 — Relative moves: approach, slide and retract
+   --------------------------------------------------------------
+   ROBOT     MCS500 only (R1)
+   TEACHES   MoveLinRelTrf, MoveLinRelWrf, MoveJointsRel
+   NEEDS     Robot activated, no tool mounted
+   WATCH     A pick pattern that works at any angle, unchanged
+   TIME      ~35 s
+   ============================================================== */
+
+/* ---------------------------------------------------------------
+   THE COMMANDS
+
+       MoveLinRelTrf(x, y, z, γ)
+       MoveLinRelWrf(x, y, z, γ)
+
+   Same four arguments as MoveLin, but they are an OFFSET from
+   where the robot already is, not an absolute destination. Both
+   move in a straight line. The difference is which way the
+   offset points:
+
+     MoveLinRelTrf   relative to the TOOL frame — "slide 20 mm
+                     along the part", whichever way the tool
+                     happens to be turned
+     MoveLinRelWrf   relative to the WORLD frame — "20 mm towards
+                     the back of the tray", regardless of how the
+                     tool is turned
+
+   ON A SCARA, THE DIFFERENCE IS SIDEWAYS ONLY
+
+   Every frame on the MCS500 has its z pointing up. So "down
+   30 mm" is the same in both frames — always z = -30, always
+   straight down, always into the work. (Note the minus: down is
+   negative here, on every frame, every time.)
+
+   Where the two frames differ is in the horizontal plane. The
+   TRF turns with the tool — with γ. The WRF does not. So the
+   question to ask is: does this sideways move belong to the
+   PART, or to the CELL?
+
+   WHY THIS IS MORE THAN A CONVENIENCE
+
+   In basic/04 the approach pattern was written in absolute
+   coordinates:
+
+       MovePose(180, 0, 100, 0)     above the part
+       MoveLin(180, 0, 60, 0)       down onto it
+       MoveLin(180, 0, 100, 0)      back up
+
+   Every one of those z values has to be recomputed if the pick
+   point moves. With a hundred pick points, that is a hundred
+   pairs of numbers that can disagree with each other.
+
+   Written relatively, the pattern becomes:
+
+       MovePose(<the point above the part>)
+       MoveLinRelTrf(0, 0, -30, 0)    down
+       ... grip, slide, lift ...
+
+   Now there is ONE pose per pick point, and the approach
+   distance is stated once. Teach a new point and the approach
+   comes along for free.
+
+   And the slide is where the TRF earns its keep. A part lying at
+   45 degrees has to be slid out of its nest at 45 degrees.
+   Written in the tool frame, "slide 20 mm along x" is one line
+   that is correct at every angle. Written in the world frame, it
+   is trigonometry, recomputed for every part.
+
+   TRF OR WRF?
+
+   Use TRF when the motion is about the part: slide it out of its
+   nest, push it against its own stop, back off along its own
+   edge. The tool was turned to match the part, so the tool frame
+   already knows which way the part points.
+
+   Use WRF when the motion is about the cell: step to the next
+   row of a tray, clear a wall that runs along the bench, move
+   towards the conveyor. The cell does not turn with the tool.
+
+   These are linear moves, so they obey SetCartLinVel and all the
+   MoveLin caveats: they can be refused if the line leaves the
+   reachable area, and they hold the arm configuration.
+
+   THE JOINT-SPACE COUSIN
+
+       MoveJointsRel(Δθ1, Δθ2, Δd3, Δθ4)
+
+   The same idea for joints: move each joint by an amount, from
+   wherever it is. No Cartesian check, no straight-line promise —
+   just "this much more". On a SCARA two of these are very useful:
+   MoveJointsRel(0, 0, -30, 0) drops the shaft 30 mm, which is
+   straight down by construction, and MoveJointsRel(0, 0, 0, 90)
+   gives the shaft a quarter turn, whatever it was holding.
+   --------------------------------------------------------------- */
+
+
+/* --- Standard reset: start from a known state -----------------
+   Deactivating loses every NON-persistent setting — tool and
+   world frames, speeds, accelerations, blending, payload, torque
+   limits, posture and turn selection, move mode, MoveJump
+   settings — so this program starts from firmware defaults no
+   matter what ran before it. Reactivating brings the motors
+   back.
+
+   This does NOT move the arm: the MCS500 has absolute encoders
+   and never needs homing, which is why there is no Home() here.
+
+   It does NOT reset persistent settings — joint limits, work
+   zone, tool sphere, collision, P-Stop 2 and calibration config
+   all survive. Run 00_common/00_cold_start.mxprog for those.
+
+   This block is identical in every example. To remove it
+   everywhere, see the README. */
+DeactivateRobot()
+ActivateRobot()
+ResetError()
+ResumeMotion()
+
+
+SetJointVel(20)
+SetCartLinVel(60)
+
+MoveJoints(0, 0, 0, 0)
+Delay(1)
+
+
+/* --- The pick pattern, written once ----------------------------
+   Below, the same four-line pattern runs at three different pick
+   points, with the part lying at three different angles. The
+   pattern itself never changes — only the MovePose line that
+   puts the tool above the part, turned to match it. */
+
+// --- Pick point 1: part lying square --------------------------
+MovePose(170, -60, 80, 0)
+MoveLinRelTrf(0, 0, -30, 0)           // down onto the part
+Delay(0.5)                            // (grip here)
+MoveLinRelTrf(20, 0, 0, 0)            // slide 20 mm along the part
+MoveLinRelTrf(0, 0, 30, 0)            // lift clear
+
+Delay(1)
+
+// --- Pick point 2: part lying at 45 degrees -------------------
+// This is the one that proves the point. The part is turned,
+// the tool is turned to match, and the slide line is unchanged —
+// it still runs along the part, because "x" follows the tool. In
+// absolute coordinates this slide would need a sine and a cosine.
+MovePose(180, 0, 80, 45)
+MoveLinRelTrf(0, 0, -30, 0)
+Delay(0.5)
+MoveLinRelTrf(20, 0, 0, 0)
+MoveLinRelTrf(0, 0, 30, 0)
+
+Delay(1)
+
+// --- Pick point 3: part lying at -30 degrees ------------------
+MovePose(170, 60, 80, -30)
+MoveLinRelTrf(0, 0, -30, 0)
+Delay(0.5)
+MoveLinRelTrf(20, 0, 0, 0)
+MoveLinRelTrf(0, 0, 30, 0)
+
+Delay(1)
+
+
+/* --- TRF versus WRF, side by side -------------------------------
+   Same turned pose, same 30 mm, two different directions. */
+
+MovePose(170, 0, 80, 45)
+Delay(0.5)
+
+// Along the tool's x — the diagonal, at 45 degrees, the way the
+// tool is turned.
+MoveLinRelTrf(30, 0, 0, 0)
+Delay(0.5)
+MoveLinRelTrf(-30, 0, 0, 0)
+Delay(0.5)
+
+// Along the world's x — straight out from the base, regardless
+// of the 45 degree turn. Watch the two moves back to back and
+// the difference is unmistakable.
+MoveLinRelWrf(30, 0, 0, 0)
+Delay(0.5)
+MoveLinRelWrf(-30, 0, 0, 0)
+Delay(1)
+
+
+/* --- The joint-space cousin ------------------------------------
+   Same place, joint moves this time. Drop the shaft 30 mm, give
+   it a quarter turn, undo both. Four lines that work from any
+   starting position, because none of them names one. */
+MoveJointsRel(0, 0, -30, 0)
+Delay(0.5)
+MoveJointsRel(0, 0, 0, 90)
+Delay(0.5)
+MoveJointsRel(0, 0, 0, -90)
+MoveJointsRel(0, 0, 30, 0)
+
+
+// --- Home -----------------------------------------------------
+MoveJoints(0, 0, 0, 0)
+
+
+/* ---------------------------------------------------------------
+   THINGS TO TRY
+
+   1. Change every "30" in the pick patterns to "20" with a find
+      and replace, and run again. The approach distance for the
+      entire program just changed, in one edit. Compare that to
+      editing absolute z values for every point.
+
+   2. The 45 degree pick is the strongest single demonstration
+      here. Show it, then ask how their current system handles
+      parts that arrive at an angle — from a vision system, say.
+
+   NEXT   04_posture_configuration.mxprog — the two different
+          ways to reach one pose.
+   --------------------------------------------------------------- */
